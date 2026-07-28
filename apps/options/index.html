@@ -389,6 +389,15 @@
                                 </span>
                             </label>
 
+                            <label class="setting-toggle-row" for="AUTO_APPLY_EXTENSION_UPDATE">
+                                <input class="setting-switch-input" type="checkbox" value="AUTO_APPLY_EXTENSION_UPDATE" id="AUTO_APPLY_EXTENSION_UPDATE" v-model="selectedOpts"/>
+                                <span class="setting-switch" aria-hidden="true"></span>
+                                <span class="setting-copy">
+                                    <strong>自动应用扩展更新</strong>
+                                    <small>关闭时只提醒有新版本，避免更新重载关闭正在使用的工具页。</small>
+                                </span>
+                            </label>
+
                             <label class="setting-toggle-row" for="JSON_PAGE_FORMAT">
                                 <input class="setting-switch-input" type="checkbox" value="JSON_PAGE_FORMAT" id="JSON_PAGE_FORMAT" v-model="selectedOpts"/>
                                 <span class="setting-switch" aria-hidden="true"></span>

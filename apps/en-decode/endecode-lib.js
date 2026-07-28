@@ -93,7 +93,7 @@ let EncodeUtils = (() => {
      */
     let _utf8Decode = function (str) {
         let out, i, len, c;
-        let char2, char3;
+        let char2, char3, char4, codePoint;
         out = "";
         len = str.length;
         i = 0;
@@ -124,6 +124,18 @@ let EncodeUtils = (() => {
                     out += String.fromCharCode(((c & 0x0F) << 12) |
                         ((char2 & 0x3F) << 6) |
                         ((char3 & 0x3F) << 0));
+                    break;
+                case 15:
+                    // 11110xxx 10xx xxxx 10xx xxxx 10xx xxxx
+                    char2 = str.charCodeAt(i++);
+                    char3 = str.charCodeAt(i++);
+                    char4 = str.charCodeAt(i++);
+                    codePoint = ((c & 0x07) << 18) |
+                        ((char2 & 0x3F) << 12) |
+                        ((char3 & 0x3F) << 6) |
+                        (char4 & 0x3F);
+                    codePoint -= 0x10000;
+                    out += String.fromCharCode(0xD800 + (codePoint >> 10), 0xDC00 + (codePoint & 0x3FF));
                     break;
             }
         }
@@ -166,24 +178,45 @@ let EncodeUtils = (() => {
         return out;
     };
 
+    let _tolerantUrlDecode = function(text, options) {
+        options = options || {};
+        let source = String(text == null ? '' : text);
+        if (options.plusAsSpace) {
+            source = source.replace(/\+/g, '%20');
+        }
+        try {
+            return decodeURIComponent(source);
+        } catch (e) {
+            return source.replace(/(?:%[0-9a-fA-F]{2})+/g, function(segment) {
+                try {
+                    return decodeURIComponent(segment);
+                } catch (err) {
+                    return segment.replace(/%([0-9a-fA-F]{2})/g, function(_, hex) {
+                        return String.fromCharCode(parseInt(hex, 16));
+                    });
+                }
+            });
+        }
+    };
+
+    let _normalizeBase64Input = function(str) {
+        let source = _tolerantUrlDecode(str).trim()
+            .replace(/^data:[^,]+,/, '')
+            .replace(/\s+/g, '')
+            .replace(/-/g, '+')
+            .replace(/_/g, '/');
+        let padLength = (4 - source.length % 4) % 4;
+        return source + '='.repeat(padLength);
+    };
+
     /**
      * 此方法用于将文字进行base64解码
      * @param {Object} str 源码
      * @return {String} 源码
      */
     let _base64Decode = function (str) {
-        // 首先进行URL解码处理，将%XX格式的字符转换回原始字符
-        try {
-            // 使用decodeURIComponent进行URL解码
-            str = decodeURIComponent(str);
-        } catch (e) {
-            // 如果decodeURIComponent失败，尝试手动替换常见的URL编码字符
-            str = str.replace(/%2B/g, '+')
-                    .replace(/%2F/g, '/')
-                    .replace(/%3D/g, '=')
-                    .replace(/%20/g, ' ');
-        }
-        
+        str = _normalizeBase64Input(str);
+
         let c1, c2, c3, c4;
         let i, len, out;
         len = str.length;
@@ -230,6 +263,19 @@ let EncodeUtils = (() => {
         }
 
         return out;
+    };
+
+    let _formatDecodedText = function(text) {
+        let value = String(text == null ? '' : text);
+        let trimmed = value.trim();
+        if (!trimmed || !/^[\{\[]/.test(trimmed)) {
+            return value;
+        }
+        try {
+            return JSON.stringify(JSON.parse(trimmed), null, 4);
+        } catch (e) {
+            return value;
+        }
     };
 
     /**
@@ -670,8 +716,8 @@ let EncodeUtils = (() => {
             const [key, value] = pair.trim().split('=');
             let obj = {},dk , vk ;
             try {
-                dk = decodeURIComponent(key);
-                vk = decodeURIComponent(value);
+                dk = _tolerantUrlDecode(key);
+                vk = _tolerantUrlDecode(value);
             } catch (error) {
                 dk = key;
                 vk = value;
@@ -794,6 +840,9 @@ let EncodeUtils = (() => {
         uniDecode: _uniDecode,
         base64Encode: _base64Encode,
         base64Decode: _base64Decode,
+        normalizeBase64Input: _normalizeBase64Input,
+        tolerantUrlDecode: _tolerantUrlDecode,
+        formatDecodedText: _formatDecodedText,
         utf8Encode: _utf8Encode,
         utf8Decode: _utf8Decode,
         utf16to8: _utf16to8,

@@ -200,9 +200,10 @@
                         <div>
                             <h2>输入</h2>
                         </div>
-                        <div class="fh-pane-actions" v-if="nodeEditActive">
-                            <button type="button" class="fh-pane-tool-action fh-node-restore-action" @click="restoreNodeEditSource">恢复原 JSON</button>
-                        </div>
+                    </div>
+                    <div class="fh-node-edit-banner" v-if="nodeEditActive" role="status">
+                        <span>正在编辑选中节点</span>
+                        <button type="button" class="fh-pane-tool-action fh-node-restore-action" @click="restoreNodeEditSource">恢复原 JSON</button>
                     </div>
                     <div class="row panel-txt">
                         <textarea class="form-control mod-textarea" id="jsonSource" placeholder="在这里粘贴需要格式化的 JSON 代码" ref="jsonBox"></textarea>
@@ -216,9 +217,7 @@
                         </div>
                         <div class="fh-pane-actions">
                             <button type="button" class="fh-pane-ai-action fh-ai-tool-btn" v-if="errorMsg && canUseJsonLocalAi" @click="askAiForJsonRepair" :disabled="jsonAiControlDisabled" :title="jsonAiStatusText">AI 修复</button>
-                            <div class="fh-json-error-actions" v-if="errorMsg">
-                                <button type="button" class="fh-pane-tool-action fh-error-tool-action" @click="showRawFallbackResult()">查看原文预览</button>
-                                <button type="button" class="fh-pane-tool-action fh-error-tool-action" v-if="rawFallbackVisible && rawFallbackTruncated" @click="showFullRawFallbackResult">展开完整原文</button>
+                            <div class="fh-json-error-actions" v-if="errorMsg && (nestedEscapeParse || uiMode === 'lite')">
                                 <button type="button" class="fh-pane-tool-action fh-error-tool-action" v-if="nestedEscapeParse" @click="retryWithoutNestedEscapeParse">关闭嵌套解析后重试</button>
                                 <button type="button" class="fh-pane-tool-action fh-error-tool-action" v-if="uiMode === 'lite'" @click="setUiMode('omni')">切到 Omni</button>
                             </div>

@@ -43,6 +43,23 @@
                         <span>{{ errorMessage }}</span>
                     </span>
                 </div>
+                <aside class="json-diff-summary" v-if="compareMode === 'json' && diffSummary.length" role="region" aria-live="polite" aria-label="结构化差异摘要">
+                    <div class="json-diff-summary-title">
+                        <div class="json-diff-summary-heading">
+                            <strong>结构化差异</strong>
+                            <span>{{ diffSummary.length }} 处</span>
+                        </div>
+                        <button type="button" class="json-diff-summary-close" @click="clearDiffSummary" aria-label="关闭结构化差异摘要">×</button>
+                    </div>
+                    <div class="json-diff-summary-list">
+                        <div class="json-diff-summary-item" v-for="item in diffSummary" :key="item.id">
+                            <span class="json-diff-op" :class="'json-diff-op-' + item.op">{{ item.label }}</span>
+                            <code>{{ item.path }}</code>
+                            <span class="json-diff-from" v-if="item.from">从 {{ item.from }}</span>
+                            <span class="json-diff-value" v-if="item.valuePreview">{{ item.valuePreview }}</span>
+                        </div>
+                    </div>
+                </aside>
                 <div class="col-md-6 box-wrapper-left">
                     <textarea class="form-control mod-textarea" id="jsonSourceLeft" ref="srcLeft" placeholder="左侧粘贴待比对内容"></textarea>
                 </div>

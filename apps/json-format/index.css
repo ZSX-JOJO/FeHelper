@@ -1364,17 +1364,118 @@ html.fh-jf .fh-json-ai-actions .fh-pane-ai-action.fh-ai-tool-btn:focus {
     flex-wrap: wrap;
 }
 
-.fh-json-error-actions .fh-error-tool-action {
-    border-color: rgba(200, 58, 66, 0.16) !important;
-    background: #fff5f6 !important;
-    color: #ab2f38 !important;
+html.fh-jf .fh-json-error-actions .fh-error-tool-action {
+    height: 30px;
+    min-width: 0;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(37, 99, 235, 0.16) !important;
+    border-radius: 999px;
+    background: #ffffff !important;
+    color: #315078 !important;
+    font-size: 13px;
+    font-weight: 760;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: none;
 }
 
-.fh-json-error-actions .fh-error-tool-action:hover,
-.fh-json-error-actions .fh-error-tool-action:focus {
-    border-color: rgba(200, 58, 66, 0.28) !important;
-    background: #ffe9ec !important;
-    color: #92252d !important;
+html.fh-jf .fh-json-error-actions .fh-error-tool-action:hover,
+html.fh-jf .fh-json-error-actions .fh-error-tool-action:focus {
+    border-color: rgba(37, 99, 235, 0.3) !important;
+    background: #f3f7ff !important;
+    color: #1d4ed8 !important;
+}
+
+.fh-node-edit-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 36px;
+    margin: 8px 10px 0;
+    padding: 7px 10px;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    border-radius: 8px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.fh-node-edit-banner .fh-node-restore-action {
+    height: 28px;
+    flex: 0 0 auto;
+    padding: 0 12px;
+    border: 1px solid rgba(37, 99, 235, 0.24) !important;
+    border-radius: 999px;
+    background: #ffffff !important;
+    color: #1d4ed8 !important;
+    font-size: 12px;
+    font-weight: 760;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: none;
+}
+
+.fh-node-edit-banner .fh-node-restore-action:hover,
+.fh-node-edit-banner .fh-node-restore-action:focus {
+    border-color: rgba(37, 99, 235, 0.4) !important;
+    background: #dbeafe !important;
+    color: #1e40af !important;
+}
+
+.fh-raw-source-fallback {
+    margin: 12px;
+    border: 1px solid rgba(214, 222, 236, 0.96);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--fh-text);
+    overflow: hidden;
+    box-shadow: none;
+}
+
+.fh-raw-source-fallback-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--fh-line-soft);
+    background: #fbfcff;
+}
+
+.fh-raw-source-fallback-copy {
+    min-width: 0;
+}
+
+.fh-raw-source-fallback-head span {
+    color: var(--fh-muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.fh-raw-source-fallback-meta {
+    flex: 0 0 auto;
+    padding-top: 1px;
+    color: var(--fh-faint) !important;
+    white-space: nowrap;
+}
+
+.fh-raw-source-fallback-pre {
+    max-height: 55vh;
+    margin: 0;
+    padding: 13px 14px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f8fafc;
+    color: var(--fh-text);
+    font-family: var(--fh-mono);
+    font-size: 12px;
+    line-height: 1.7;
 }
 
 .fh-pane-header h2 {
@@ -1559,8 +1660,7 @@ html.fh-jf .mod-json .callback-name {
     color: var(--fh-red);
 }
 
-.fh-error-state,
-.fh-raw-fallback {
+.fh-error-state {
     max-width: 100%;
     border: 1px solid var(--fh-line-soft);
     border-radius: var(--fh-radius);
@@ -1612,37 +1712,6 @@ html.fh-jf .mod-json .callback-name {
 
 .fh-error-hints li + li {
     margin-top: 4px;
-}
-
-.fh-raw-fallback-head {
-    padding: 14px 16px 0;
-}
-
-.fh-raw-fallback-head strong {
-    display: block;
-    color: var(--fh-text);
-    font-size: 13px;
-    font-weight: 760;
-}
-
-.fh-raw-fallback-head span {
-    display: block;
-    margin-top: 5px;
-    color: var(--fh-muted);
-    font-size: 12px;
-    line-height: 1.7;
-}
-
-.fh-raw-fallback-pre {
-    margin: 0;
-    padding: 14px 16px 16px;
-    color: var(--fh-text);
-    font-family: var(--fh-mono);
-    font-size: 12px;
-    line-height: 1.7;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
 }
 
 #errorTips {
@@ -2347,16 +2416,29 @@ body.theme-dark .fh-pane-actions .fh-option-bar .xjf-btn:focus {
 }
 
 body.theme-dark .fh-json-error-actions .fh-error-tool-action {
-    border-color: rgba(248, 113, 113, 0.18) !important;
-    background: rgba(69, 10, 10, 0.42) !important;
-    color: #fecaca !important;
+    border-color: rgba(147, 197, 253, 0.18) !important;
+    background: rgba(15, 23, 42, 0.56) !important;
+    color: #dbeafe !important;
 }
 
 body.theme-dark .fh-json-error-actions .fh-error-tool-action:hover,
 body.theme-dark .fh-json-error-actions .fh-error-tool-action:focus {
-    border-color: rgba(248, 113, 113, 0.3) !important;
-    background: rgba(127, 29, 29, 0.42) !important;
-    color: #fee2e2 !important;
+    border-color: rgba(147, 197, 253, 0.34) !important;
+    background: rgba(30, 64, 175, 0.42) !important;
+    color: #eff6ff !important;
+}
+
+body.theme-dark .fh-node-edit-banner .fh-node-restore-action {
+    border-color: rgba(147, 197, 253, 0.22) !important;
+    background: rgba(15, 23, 42, 0.56) !important;
+    color: #dbeafe !important;
+}
+
+body.theme-dark .fh-node-edit-banner .fh-node-restore-action:hover,
+body.theme-dark .fh-node-edit-banner .fh-node-restore-action:focus {
+    border-color: rgba(147, 197, 253, 0.36) !important;
+    background: rgba(30, 64, 175, 0.42) !important;
+    color: #eff6ff !important;
 }
 
 body.theme-dark .fh-json-ai-actions .fh-pane-ai-action.fh-ai-tool-btn {
@@ -2389,10 +2471,15 @@ body.theme-dark .fh-input-pane .CodeMirror-focused .CodeMirror-selected {
 }
 
 body.theme-dark .fh-error-state,
-body.theme-dark .fh-raw-fallback {
+body.theme-dark .fh-raw-source-fallback {
     border-color: rgba(148, 163, 184, 0.2);
     background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.92));
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+body.theme-dark .fh-raw-source-fallback-head {
+    border-bottom-color: rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.7);
 }
 
 body.theme-dark .fh-error-badge {
@@ -2401,8 +2488,8 @@ body.theme-dark .fh-error-badge {
 }
 
 body.theme-dark .fh-error-state strong,
-body.theme-dark .fh-raw-fallback-head strong,
-body.theme-dark .fh-raw-fallback-pre {
+body.theme-dark .fh-raw-source-fallback-head strong,
+body.theme-dark .fh-raw-source-fallback-pre {
     color: #e2e8f0;
 }
 
@@ -2411,8 +2498,16 @@ body.theme-dark .fh-error-message {
 }
 
 body.theme-dark .fh-error-hints,
-body.theme-dark .fh-raw-fallback-head span {
+body.theme-dark .fh-raw-source-fallback-head span {
     color: #94a3b8;
+}
+
+body.theme-dark .fh-raw-source-fallback-meta {
+    color: #64748b !important;
+}
+
+body.theme-dark .fh-raw-source-fallback-pre {
+    background: rgba(15, 23, 42, 0.64);
 }
 
 body.theme-dark .fh-input-pane .CodeMirror-gutters {

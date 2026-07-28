@@ -97,19 +97,19 @@ new Vue({
                         this.resultContent = encodeURIComponent(this.sourceContent);
                     } else if (this.selectedType === 'utf8Decode') {
 
-                        this.resultContent = decodeURIComponent(this.sourceContent);
+                        this.resultContent = EncodeUtils.formatDecodedText(EncodeUtils.tolerantUrlDecode(this.sourceContent));
                     } else if (this.selectedType === 'utf16Encode') {
 
                         this.resultContent = EncodeUtils.utf8to16(encodeURIComponent(this.sourceContent));
                     } else if (this.selectedType === 'utf16Decode') {
 
-                        this.resultContent = decodeURIComponent(EncodeUtils.utf16to8(this.sourceContent));
+                        this.resultContent = EncodeUtils.formatDecodedText(EncodeUtils.tolerantUrlDecode(EncodeUtils.utf16to8(this.sourceContent)));
                     } else if (this.selectedType === 'base64Encode') {
 
                         this.resultContent = EncodeUtils.base64Encode(EncodeUtils.utf8Encode(this.sourceContent));
                     } else if (this.selectedType === 'base64Decode') {
 
-                        this.resultContent = EncodeUtils.utf8Decode(EncodeUtils.base64Decode(this.sourceContent));
+                        this.resultContent = EncodeUtils.formatDecodedText(EncodeUtils.utf8Decode(EncodeUtils.base64Decode(this.sourceContent)));
                     } else if (this.selectedType === 'md5Encode') {
 
                         this.resultContent = EncodeUtils.md5(this.sourceContent);

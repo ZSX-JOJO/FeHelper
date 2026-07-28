@@ -25,6 +25,25 @@ describe('issue #594-#596 regressions', () => {
         expect(source).toContain('rightJson = parseJsonForDiff(rightText);');
     });
 
+    it('Issue #624/#630: json-diff shows structured differences and normalizes numeric string key pointers', () => {
+        const html = readSource('apps/json-diff/index.html');
+        const source = readSource('apps/json-diff/index.js');
+        const css = readSource('apps/json-diff/index.css');
+
+        expect(html).toContain('结构化差异');
+        expect(html).toContain('diffSummary');
+        expect(source).toContain('function normalizeDiffPointer(path)');
+        expect(source).toContain('normalizePreservedJsonPointer');
+        expect(source).toContain('this.diffSummary = this.buildDiffSummary(diffs);');
+        expect(source).toContain('const path = normalizeDiffPointer(diff.path);');
+        expect(css).toContain('.json-diff-summary');
+        expect(css).toContain('position: fixed;');
+        expect(css).toContain('bottom: 18px;');
+        expect(html).toContain('class="json-diff-summary-close"');
+        expect(html).not.toContain('has-diff-summary');
+        expect(css).not.toContain('.mod-json.has-diff-summary');
+    });
+
     it('json-diff toolbar stays compact instead of growing over the editors', () => {
         const css = readSource('apps/json-diff/index.css');
 
@@ -104,5 +123,17 @@ describe('issue #594-#596 regressions', () => {
         expect(fileTemplate).not.toContain('"contentScript": #contentScript#');
         expect(helloWorldConfig).toContain('"contentScriptJs": true');
         expect(helloWorldConfig).not.toContain('"contentScript": true');
+    });
+
+    it('Issue #626: local zip import matches nested assets and honors fh-config tool id', () => {
+        const source = readSource('apps/devtools/index.js');
+
+        expect(source).toContain('normalizeZipEntryPath(fileName)');
+        expect(source).toContain('stripZipRootPath(fileName)');
+        expect(source).toContain('resolveImportedZipAssetName(toolName, htmlAssetRef, zipEntryName)');
+        expect(source).toContain('let activeToolName = toolName;');
+        expect(source).toContain('activeToolName = configToolNames[0];');
+        expect(source).toContain('this.resolveImportedZipAssetName(activeToolName, file[0], jcEntry.filename)');
+        expect(source).not.toContain('file[0].indexOf(jcEntry.filename) > -1');
     });
 });

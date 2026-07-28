@@ -225,6 +225,31 @@ function parseJsonForDiff(text) {
     return JSON.parse(text);
 }
 
+function normalizeDiffPointer(path) {
+    if (window.FHJsonAutoUtils && typeof window.FHJsonAutoUtils.normalizePreservedJsonPointer === 'function') {
+        return window.FHJsonAutoUtils.normalizePreservedJsonPointer(path);
+    }
+    return path;
+}
+
+function getDiffOpLabel(op) {
+    const labels = {
+        add: '新增',
+        remove: '删除',
+        replace: '修改',
+        move: '移动',
+        copy: '复制',
+        test: '校验'
+    };
+    return labels[op] || op;
+}
+
+function formatDiffValue(value) {
+    if (typeof value === 'undefined') return '';
+    const text = typeof value === 'string' ? value : stringifyJSONForEditor(value);
+    return text.length > 180 ? text.slice(0, 177) + '...' : text;
+}
+
 window.vueApp = new Vue({
     el: '#pageContainer',
     data: {
@@ -239,6 +264,7 @@ window.vueApp = new Vue({
         hasPendingChanges: false,
         leftContentLength: 0,
         rightContentLength: 0,
+        diffSummary: [],
         lineHighlights: {
             left: [],
             right: []
@@ -280,6 +306,7 @@ window.vueApp = new Vue({
             this.compareMode = mode;
             this.clearMarkers();
             this.resetFeedback();
+            this.clearDiffSummary();
             this.applyEditorPlaceholders();
             this.errorMessage = mode === 'json'
                 ? '已切换到 JSON 对比，可继续使用结构化高亮。'
@@ -306,6 +333,7 @@ window.vueApp = new Vue({
             let rightOk = true;
 
             this.clearMarkers();
+            this.clearDiffSummary();
 
             if (!leftText.trim().length) {
                 this.setInputError('left', '请在左侧填入待比对的 JSON 内容！');
@@ -347,6 +375,7 @@ window.vueApp = new Vue({
                 const diffs = jsonpatch.compare(leftJson, rightJson);
                 this.differenceCount = diffs.length;
                 this.isDifferent = diffs.length > 0;
+                this.diffSummary = this.buildDiffSummary(diffs);
                 this.errorMessage = diffs.length
                     ? '两侧 JSON 比对完成，共有 ' + diffs.length + ' 处不一致！'
                     : '两侧 JSON 比对完成，内容一致！';
@@ -376,6 +405,7 @@ window.vueApp = new Vue({
             const diffUtils = window.JsonDiffUtils;
 
             this.clearMarkers();
+            this.clearDiffSummary();
 
             if (!leftText.trim().length) {
                 this.setInputError('left', '请在左侧填入待比对内容！');
@@ -401,6 +431,17 @@ window.vueApp = new Vue({
             this.errorMessage = result.isDifferent
                 ? '两侧文本比对完成，共有 ' + result.changeCount + ' 行不一致！'
                 : '两侧文本比对完成，内容一致！';
+        },
+
+        buildDiffSummary: function(diffs) {
+            return diffs.map((diff, index) => ({
+                id: index + '-' + diff.op + '-' + diff.path,
+                op: diff.op,
+                label: getDiffOpLabel(diff.op),
+                path: normalizeDiffPointer(diff.path) || '/',
+                from: diff.from ? normalizeDiffPointer(diff.from) : '',
+                valuePreview: formatDiffValue(diff.value)
+            }));
         },
 
         formatBothSides: function() {
@@ -453,6 +494,7 @@ window.vueApp = new Vue({
             jsonBox.right.setValue('');
             this.clearMarkers();
             this.resetFeedback();
+            this.clearDiffSummary();
             this.hasPendingChanges = false;
             this.updateContentState();
             jsonBox.left.refresh();
@@ -478,6 +520,10 @@ window.vueApp = new Vue({
                 jsonBox[side].removeLineClass(item.line, 'background', item.className);
             });
             this.lineHighlights[side] = [];
+        },
+
+        clearDiffSummary: function() {
+            this.diffSummary = [];
         },
 
         applyLineHighlights: function(side, lines, className) {
@@ -516,7 +562,7 @@ window.vueApp = new Vue({
                 const textValue = editor.getValue();
                 const result = jsonSourceMap.parse(textValue);
                 const pointers = result.pointers;
-                const path = diff.path;
+                const path = normalizeDiffPointer(diff.path);
 
                 if (!pointers[path]) {
                     console.warn('找不到路径的指针:', path);
@@ -546,6 +592,7 @@ window.vueApp = new Vue({
             this.rightSideError = false;
             this.differenceCount = 0;
             this.isDifferent = false;
+            this.clearDiffSummary();
             this.errorMessage = '';
         },
 
@@ -556,6 +603,7 @@ window.vueApp = new Vue({
             this.rightSideError = false;
             this.differenceCount = 0;
             this.isDifferent = false;
+            this.clearDiffSummary();
             this.hasPendingChanges = true;
             this.errorMessage = message || '内容已变更，点击「对比」查看结果。';
         },
@@ -567,6 +615,7 @@ window.vueApp = new Vue({
             this.rightSideError = which === 'right' || which === 'left-right';
             this.differenceCount = 0;
             this.isDifferent = false;
+            this.clearDiffSummary();
         },
 
         applyEditorPlaceholders: function() {

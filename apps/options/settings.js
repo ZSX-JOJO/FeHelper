@@ -12,6 +12,7 @@ export default (() => {
         'OPT_ITEM_CONTEXTMENUS': true,
         'JSON_PAGE_FORMAT': true,
         'FORBID_OPEN_IN_NEW_TAB': false,
+        'AUTO_APPLY_EXTENSION_UPDATE': false,
         'AUTO_DARK_MODE': false,
         'ALWAYS_DARK_MODE': false,
         'CONTENT_SCRIPT_ALLOW_ALL_FRAMES': false,

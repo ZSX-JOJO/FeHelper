@@ -24,7 +24,6 @@ let AUTO_DECODE = 'jsonformat:auto-decode';
 let JSON_WINDOW_NOTE = 'jsonformat:window-note';
 let FH_UI_MODE = 'FH_UI_MODE';
 let JSON_FORMAT_UI_MODE = 'JSON_FORMAT_UI_MODE';
-const RAW_FALLBACK_PREVIEW_LIMIT = 12000;
 
 const JSON_DERIVED_AI_TASKS = {
     structure: {
@@ -270,9 +269,6 @@ new Vue({
         tableViewSourcePath: '',
         tableViewColumns: [],
         tableViewRows: [],
-        rawFallbackVisible: false,
-        rawFallbackTruncated: false,
-        rawFallbackTotalLength: 0,
         aiPanel: createInlineAiState(),
         aiAvailability: createJsonAiAvailabilityState(),
         aiAvailabilityChecking: false,
@@ -499,7 +495,7 @@ new Vue({
                 ? '<li>当前已开启“嵌套解析”，如果接口返回的是普通字符串，可先关闭后重试。</li>'
                 : '';
             const rawHint = currentValue.trim()
-                ? '<li>可点右上角“查看原文预览”，先确认接口实际返回内容。</li>'
+                ? '<li>原文已保留在左侧输入框，可按错误定位修正或使用 AI 修复。</li>'
                 : '';
             return [
                 '<div class="fh-error-state">',
@@ -511,23 +507,6 @@ new Vue({
                 nestedHint,
                 rawHint,
                 '  </ul>',
-                '</div>'
-            ].join('');
-        },
-
-        buildRawFallbackHtml(source, options = {}) {
-            const isTruncated = !!options.truncated;
-            const totalLength = typeof options.totalLength === 'number' ? options.totalLength : String(source || '').length;
-            const previewNote = isTruncated
-                ? `当前仅预览前 ${RAW_FALLBACK_PREVIEW_LIMIT.toLocaleString('zh-CN')} 个字符，避免超大响应在失败态再次拖慢页面。`
-                : `当前展示完整原文，共 ${totalLength.toLocaleString('zh-CN')} 个字符。`;
-            return [
-                '<div class="fh-raw-fallback">',
-                '  <div class="fh-raw-fallback-head">',
-                '    <strong>原始返回内容</strong>',
-                `    <span>这里不做解析，只保留接口原文，方便你判断问题是在数据本身还是解析策略。${previewNote}</span>`,
-                '  </div>',
-                `  <pre class="fh-raw-fallback-pre">${this.escapeHtml(source)}</pre>`,
                 '</div>'
             ].join('');
         },
@@ -554,7 +533,6 @@ new Vue({
             this.tableViewReady = false;
             this.setResultActionAvailability(false);
             this.resetTableViewState();
-            this.resetRawFallbackState();
         },
 
         resetTableViewState() {
@@ -565,12 +543,6 @@ new Vue({
             this.tableViewColumns = [];
             this.tableViewRows = [];
             this.tableViewMode = 'grid';
-        },
-
-        resetRawFallbackState() {
-            this.rawFallbackVisible = false;
-            this.rawFallbackTruncated = false;
-            this.rawFallbackTotalLength = 0;
         },
 
         syncResultActions(source) {
@@ -623,27 +595,6 @@ new Vue({
             this.nestedEscapeParse = !!enabled;
             this.safeSetLocalStorage('jsonformat:nested-escape-parse', this.nestedEscapeParse);
             this.format();
-        },
-
-        showRawFallbackResult(full = false) {
-            const raw = editor && typeof editor.getValue === 'function' ? editor.getValue() : '';
-            if (!raw.trim()) {
-                return;
-            }
-            const totalLength = raw.length;
-            const shouldTruncate = !full && totalLength > RAW_FALLBACK_PREVIEW_LIMIT;
-            const previewSource = shouldTruncate ? raw.slice(0, RAW_FALLBACK_PREVIEW_LIMIT) : raw;
-            this.rawFallbackVisible = true;
-            this.rawFallbackTruncated = shouldTruncate;
-            this.rawFallbackTotalLength = totalLength;
-            this.setResultPlaceholder(this.buildRawFallbackHtml(previewSource, {
-                truncated: shouldTruncate,
-                totalLength
-            }));
-        },
-
-        showFullRawFallbackResult() {
-            this.showRawFallbackResult(true);
         },
 
         retryWithoutNestedEscapeParse() {

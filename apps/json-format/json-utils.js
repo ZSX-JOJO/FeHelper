@@ -209,6 +209,18 @@ export function normalizePreservedKey(key) {
     return key;
 }
 
+export function normalizePreservedJsonPointer(path) {
+    if (typeof path !== 'string') return path;
+
+    return path.split('/').map((segment, index) => {
+        if (index === 0) return segment;
+        if (segment.indexOf(PRESERVED_INTEGER_KEY_PREFIX) === 0) {
+            return segment.slice(PRESERVED_INTEGER_KEY_PREFIX.length);
+        }
+        return segment;
+    }).join('/');
+}
+
 // ─── BigInt 安全解析（统一实现，替代 format-lib 和 json-worker 各自的版本）──
 export function parseWithBigInt(text) {
     let fixed = normalizeLooseJSONSource(text);

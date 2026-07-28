@@ -20,6 +20,7 @@ import {
     getStringBytes,
     createSafeToastHTML,
     normalizePreservedKey,
+    normalizePreservedJsonPointer,
 } from '../apps/json-format/json-utils.js';
 
 // ═══════════════════════════════════════════════════════
@@ -160,6 +161,11 @@ describe('parseWithBigInt', () => {
 
         expect(Object.keys(result).map(normalizePreservedKey)).toEqual(['2', '1', 'name']);
         expect(safeStringify(result)).toBe('{"2":"b","1":"a","name":"FeHelper"}');
+    });
+
+    it('Issue #623/#624: JSON Pointer 中的数字字符串 key 前缀会被归一化', () => {
+        expect(normalizePreservedJsonPointer('/__FH_PRESERVE_INTEGER_KEY__2/name')).toBe('/2/name');
+        expect(normalizePreservedJsonPointer('/items/0/name')).toBe('/items/0/name');
     });
 
     it('数组中的大整数', () => {

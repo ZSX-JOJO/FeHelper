@@ -123,4 +123,12 @@ describe('json-auto-utils', () => {
         expect(keys).toEqual(['2', '1', 'name']);
         expect(utils.safeStringify(parsed.value)).toBe('{"2":"b","1":"a","name":"FeHelper"}');
     });
+
+    it('Issue #623/#624: JSON Pointer 中的数字字符串 key 前缀会被归一化', () => {
+        const parsed = utils.parseJSONLike('{"2":{"name":"b"},"1":"a"}');
+        const internalKey = Object.keys(parsed.value)[0];
+
+        expect(internalKey).toBe('__FH_PRESERVE_INTEGER_KEY__2');
+        expect(utils.normalizePreservedJsonPointer('/' + internalKey + '/name')).toBe('/2/name');
+    });
 });

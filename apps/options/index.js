@@ -16,7 +16,7 @@ const TOOL_CATEGORIES = [
     { key: 'encode', name: '编解码转换类', tools: ['en-decode', 'trans-radix', 'timestamp', 'trans-color'] },
     { key: 'image', name: '图像处理类', tools: ['qr-code', 'image-base64', 'svg-converter', 'chart-maker', 'poster-maker' ,'screenshot', 'color-picker'] },
     { key: 'productivity', name: '效率工具类', tools: ['aiagent', 'sticky-notes', 'html2markdown', 'page-monkey'] },
-    { key: 'calculator', name: '计算工具类', tools: ['crontab', 'loan-rate', 'password', 'uuid-gen'] },
+    { key: 'calculator', name: '计算工具类', tools: ['crontab', 'loan-rate', 'password', 'uuid-gen', 'totp-auth'] },
     { key: 'other', name: '其他工具', tools: [] }
 ];
 
@@ -31,6 +31,7 @@ const TOOL_BADGES = {
     'aiagent': 'AI',
     'timestamp': 'TS',
     'password': 'PW',
+    'totp-auth': '2FA',
     'uuid-gen': 'ID',
     'sticky-notes': 'NT',
     'html2markdown': 'MD',
@@ -1683,6 +1684,7 @@ new Vue({
                 [
                     'OPT_ITEM_CONTEXTMENUS',
                     'FORBID_OPEN_IN_NEW_TAB',
+                    'AUTO_APPLY_EXTENSION_UPDATE',
                     'CONTENT_SCRIPT_ALLOW_ALL_FRAMES',
                     'JSON_PAGE_FORMAT',
                     'AUTO_DARK_MODE',

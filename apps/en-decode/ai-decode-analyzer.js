@@ -12,7 +12,7 @@ const OPERATION_DEFS = [
         selectedType: 'utf8Decode',
         weight: 26,
         match: text => /%[0-9a-fA-F]{2}/.test(text),
-        run: text => decodeURIComponent(text.replace(/\+/g, '%20'))
+        run: text => EncodeUtils.tolerantUrlDecode(text, {plusAsSpace: true})
     },
     {
         key: 'unicodeDecode',
@@ -28,7 +28,7 @@ const OPERATION_DEFS = [
         selectedType: 'utf16Decode',
         weight: 22,
         match: text => /\\x[0-9a-fA-F]{2}/.test(text),
-        run: text => decodeURIComponent(EncodeUtils.utf16to8(text))
+        run: text => EncodeUtils.tolerantUrlDecode(EncodeUtils.utf16to8(text))
     },
     {
         key: 'htmlEntityDecode',
@@ -277,8 +277,8 @@ function parseCookie(text) {
         let decoded;
         try {
             decoded = {
-                key: decodeURIComponent(rawKey),
-                value: decodeURIComponent(rawValue)
+                key: EncodeUtils.tolerantUrlDecode(rawKey),
+                value: EncodeUtils.tolerantUrlDecode(rawValue)
             };
         } catch {
             decoded = {

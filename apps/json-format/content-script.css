@@ -2415,6 +2415,51 @@ html.fh-jf body.theme-dark .boxOpt a:hover {
     background: #f9f9f9;
 }
 .fh-jf .json-formatter-container {display: none;}
+.fh-raw-source-fallback {
+    margin: 12px;
+    border: 1px solid rgba(214, 222, 236, 0.96);
+    border-radius: 8px;
+    background: #ffffff;
+    color: #182134;
+    overflow: hidden;
+    box-shadow: none;
+}
+.fh-raw-source-fallback-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e7ebf2;
+    background: #fbfcff;
+}
+.fh-raw-source-fallback-copy {
+    min-width: 0;
+}
+.fh-raw-source-fallback-head span {
+    color: #68748a;
+    font-size: 12px;
+    line-height: 1.6;
+}
+.fh-raw-source-fallback-meta {
+    flex: 0 0 auto;
+    padding-top: 1px;
+    color: #8b96a8 !important;
+    white-space: nowrap;
+}
+.fh-raw-source-fallback-pre {
+    max-height: 70vh;
+    margin: 0;
+    padding: 13px 14px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f8fafc;
+    color: #182134;
+    font-family: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+}
 .x-toolbar:not(.fh-json-viewbar).t-collapse .fe-feedback {
     height: 20px;
 }

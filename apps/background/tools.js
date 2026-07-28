@@ -296,6 +296,14 @@ let toolMap = {
             text: '时间戳计算器',
             contexts: ['page', 'selection', 'editable']
         }]
+    },
+    'totp-auth': {
+        name: '2FA 动态口令',
+        tips: '本地生成 TOTP 双因素认证动态码，支持 Base32 密钥和 otpauth:// URI 导入',
+        menuConfig: [{
+            icon: '2FA',
+            text: '2FA 动态口令'
+        }]
     }
 };
 

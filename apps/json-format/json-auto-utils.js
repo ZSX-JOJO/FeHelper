@@ -198,6 +198,18 @@
         return key;
     }
 
+    function normalizePreservedJsonPointer(path) {
+        if (typeof path !== 'string') return path;
+
+        return path.split('/').map(function (segment, index) {
+            if (index === 0) return segment;
+            if (segment.indexOf(PRESERVED_INTEGER_KEY_PREFIX) === 0) {
+                return segment.slice(PRESERVED_INTEGER_KEY_PREFIX.length);
+            }
+            return segment;
+        }).join('/');
+    }
+
     function parseWithBigInt(text) {
         const fixed = normalizeLooseJSONSource(text);
         const ordered = markIntegerIndexKeys(fixed);
@@ -506,6 +518,7 @@
         isYAMLResource,
         markIntegerIndexKeys,
         normalizePreservedKey,
+        normalizePreservedJsonPointer,
         parseWithBigInt,
         normalizeLooseJSONSource,
         deepParseJSONStrings,

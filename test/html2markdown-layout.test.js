@@ -42,6 +42,8 @@ describe('html2markdown preview layout', () => {
         expect(html).toContain('@click="copyHtml"');
         expect(html).toContain('@click="clearContent"');
         expect(source).toContain("const MARKDOWN_DRAFT_KEY = 'fh-html2markdown:draft';");
+        expect(source).toContain("const MARKDOWN_DRAFT_WINDOW_ID_KEY = 'fh-html2markdown:draft-window-id';");
+        expect(source).toContain("const MARKDOWN_DRAFT_INDEX_KEY = 'fh-html2markdown:draft-index';");
         expect(source).toContain("viewMode: 'split'");
         expect(source).toContain("editor.on('change', () => this.updateHashAndPreview());");
         expect(source).toContain("editor.on('scroll', () => this.syncPreviewScroll());");
@@ -50,6 +52,11 @@ describe('html2markdown preview layout', () => {
         expect(source).toContain("editor.setOption('mode', this.codeType === 'HTML' ? 'htmlmixed' : 'gfm');");
         expect(source).toContain('updateStats(source)');
         expect(source).toContain('saveDraft(source)');
+        expect(source).toContain('getDraftWindowId()');
+        expect(source).toContain('getDraftScopeKey()');
+        expect(source).toContain('getLegacyDraftKey()');
+        expect(source).toContain('getLatestDraftForMode()');
+        expect(source).toContain('updateDraftIndex(draftKey, draftTimeKey, source)');
         expect(source).toContain('getDraftKey()');
         expect(source).toContain('getDraftTimeKey()');
         expect(source).toContain('setViewMode(mode)');

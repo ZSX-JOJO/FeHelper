@@ -11,6 +11,8 @@ let previewTextArea;
 
 const MARKDOWN_DRAFT_KEY = 'fh-html2markdown:draft';
 const MARKDOWN_DRAFT_TIME_KEY = 'fh-html2markdown:draft-time';
+const MARKDOWN_DRAFT_WINDOW_ID_KEY = 'fh-html2markdown:draft-window-id';
+const MARKDOWN_DRAFT_INDEX_KEY = 'fh-html2markdown:draft-index';
 
 new Vue({
     el: '#pageContainer',
@@ -221,7 +223,15 @@ new Vue({
 
         loadDraft() {
             try {
-                return localStorage.getItem(this.getDraftKey()) || '';
+                let scopedDraft = localStorage.getItem(this.getDraftKey());
+                if (scopedDraft !== null) {
+                    return scopedDraft;
+                }
+                let legacyDraft = localStorage.getItem(this.getLegacyDraftKey());
+                if (legacyDraft !== null) {
+                    return legacyDraft;
+                }
+                return this.getLatestDraftForMode();
             } catch (e) {
                 return '';
             }
@@ -229,8 +239,11 @@ new Vue({
 
         saveDraft(source) {
             try {
-                localStorage.setItem(this.getDraftKey(), source || '');
-                localStorage.setItem(this.getDraftTimeKey(), String(Date.now()));
+                let draftKey = this.getDraftKey();
+                let draftTimeKey = this.getDraftTimeKey();
+                localStorage.setItem(draftKey, source || '');
+                localStorage.setItem(draftTimeKey, String(Date.now()));
+                this.updateDraftIndex(draftKey, draftTimeKey, source);
             } catch (e) {}
         },
 
@@ -238,15 +251,80 @@ new Vue({
             try {
                 localStorage.removeItem(this.getDraftKey());
                 localStorage.removeItem(this.getDraftTimeKey());
+                localStorage.removeItem(this.getLegacyDraftKey());
+                this.removeDraftFromIndex(this.getDraftKey());
             } catch (e) {}
         },
 
+        getDraftMode() {
+            return String(this.codeType || 'Markdown').toLowerCase();
+        },
+
+        getDraftWindowId() {
+            try {
+                let windowId = sessionStorage.getItem(MARKDOWN_DRAFT_WINDOW_ID_KEY);
+                if (!windowId) {
+                    windowId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+                    sessionStorage.setItem(MARKDOWN_DRAFT_WINDOW_ID_KEY, windowId);
+                }
+                return windowId;
+            } catch (e) {
+                return 'default';
+            }
+        },
+
+        getDraftScopeKey() {
+            return `${this.getDraftMode()}:${this.getDraftWindowId()}`;
+        },
+
         getDraftKey() {
-            return `${MARKDOWN_DRAFT_KEY}:${String(this.codeType || 'Markdown').toLowerCase()}`;
+            return `${MARKDOWN_DRAFT_KEY}:${this.getDraftScopeKey()}`;
         },
 
         getDraftTimeKey() {
-            return `${MARKDOWN_DRAFT_TIME_KEY}:${String(this.codeType || 'Markdown').toLowerCase()}`;
+            return `${MARKDOWN_DRAFT_TIME_KEY}:${this.getDraftScopeKey()}`;
+        },
+
+        getLegacyDraftKey() {
+            return `${MARKDOWN_DRAFT_KEY}:${this.getDraftMode()}`;
+        },
+
+        getDraftIndex() {
+            try {
+                return JSON.parse(localStorage.getItem(MARKDOWN_DRAFT_INDEX_KEY) || '{}');
+            } catch (e) {
+                return {};
+            }
+        },
+
+        saveDraftIndex(index) {
+            localStorage.setItem(MARKDOWN_DRAFT_INDEX_KEY, JSON.stringify(index));
+        },
+
+        updateDraftIndex(draftKey, draftTimeKey, source) {
+            let index = this.getDraftIndex();
+            index[draftKey] = {
+                key: draftKey,
+                timeKey: draftTimeKey,
+                mode: this.getDraftMode(),
+                time: Date.now(),
+                size: String(source || '').length
+            };
+            this.saveDraftIndex(index);
+        },
+
+        removeDraftFromIndex(draftKey) {
+            let index = this.getDraftIndex();
+            delete index[draftKey];
+            this.saveDraftIndex(index);
+        },
+
+        getLatestDraftForMode() {
+            let mode = this.getDraftMode();
+            let latest = Object.values(this.getDraftIndex())
+                .filter(item => item && item.mode === mode)
+                .sort((a, b) => b.time - a.time)[0];
+            return latest ? (localStorage.getItem(latest.key) || '') : '';
         },
 
         syncPreviewScroll() {

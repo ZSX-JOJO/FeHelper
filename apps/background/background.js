@@ -895,15 +895,71 @@ let BgPageInstance = (function () {
         chrome.runtime.setUninstallURL(chrome.runtime.getManifest().homepage_url);
     };
 
-    let runUpdateCheck = function () {
+    let _isEnabledSetting = function (value) {
+        return value === true || String(value) === 'true';
+    };
+
+    let _notifyExtensionUpdateDeferred = function () {
+        notifyText({
+            title: 'FeHelper 更新',
+            message: '已发现新版本。为避免关闭正在使用的工具页，请到插件设置页手动点击“立即更新”。',
+            autoClose: 8000
+        });
+    };
+
+    let _applyExtensionUpdate = function () {
+        notifyText({
+            title: 'FeHelper 更新',
+            message: '已发现新版本，正在应用更新...',
+            autoClose: 3000
+        });
+        setTimeout(() => chrome.runtime.reload(), 1000);
+    };
+
+    let _handleUpdateCheckStatus = function (result, options) {
+        const status = typeof result === 'string' ? result : result && result.status;
+        if (status !== "update_available") {
+            return;
+        }
+
+        if (options && options.manualApply) {
+            _applyExtensionUpdate();
+            return;
+        }
+
+        Settings.getOptions((opts) => {
+            if (_isEnabledSetting(opts.AUTO_APPLY_EXTENSION_UPDATE)) {
+                _applyExtensionUpdate();
+            } else {
+                _notifyExtensionUpdateDeferred();
+            }
+        });
+    };
+
+    let runUpdateCheck = function (options) {
+        options = options || {};
         const requestUpdateCheckKey = 'request' + 'UpdateCheck';
         const requestUpdateCheck = chrome.runtime && chrome.runtime[requestUpdateCheckKey];
         if (typeof requestUpdateCheck === 'function' && navigator.userAgent.indexOf("Firefox") === -1) {
-            requestUpdateCheck.call(chrome.runtime, (status) => {
-                if (status === "update_available") {
-                    chrome.runtime.reload();
+            try {
+                let handledByCallback = false;
+                const maybePromise = requestUpdateCheck.call(chrome.runtime, (status) => {
+                    handledByCallback = true;
+                    _handleUpdateCheckStatus(status, options);
+                });
+                if (maybePromise && typeof maybePromise.then === 'function') {
+                    maybePromise.then((result) => {
+                        if (!handledByCallback) {
+                            _handleUpdateCheckStatus(result, options);
+                        }
+                    }).catch(() => {});
                 }
-            });
+            } catch (e) {
+                try {
+                    const promise = requestUpdateCheck.call(chrome.runtime);
+                    promise && promise.then && promise.then((result) => _handleUpdateCheckStatus(result, options)).catch(() => {});
+                } catch (err) {}
+            }
         }
     };
 

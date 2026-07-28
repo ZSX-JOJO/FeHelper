@@ -95,6 +95,7 @@ window.Formatter = (function () {
 
     let lastItemIdGiven = 0;
     let cachedJsonString = '';
+    const RAW_PARSE_FALLBACK_PREVIEW_LIMIT = 120000;
     let plainJsonViewEnabled = false;
     let prettyJsonSelectionActive = false;
     let prettyJsonShortcutBound = false;
@@ -566,12 +567,17 @@ window.Formatter = (function () {
      */
     let getJsonText = function (el) {
 
-        let txt = el.text().replace(/复制\|下载\|删除/gm,'').replace(/":\s/gm, '":').replace(/,$/, '').trim();
+        let txt = el.clone().children('.boxOpt').remove().end().text()
+            .replace(/复制路径\|复制\|下载\|删除/gm,'')
+            .replace(/复制\|下载\|删除/gm,'')
+            .replace(/":\s/gm, '":')
+            .replace(/,$/, '')
+            .trim();
         if (!(/^{/.test(txt) && /\}$/.test(txt)) && !(/^\[/.test(txt) && /\]$/.test(txt))) {
             txt = '{' + txt + '}';
         }
         try {
-            txt = JSON.stringify(JSON.parse(txt), null, 4);
+            txt = _safeStringify(JSON.parse(txt), 4);
         } catch (err) {
         }
 
@@ -930,6 +936,17 @@ window.Formatter = (function () {
             _copyToClipboard(getJsonText(el));
         };
 
+        // 一键复制当前节点 JSONPath
+        let fnCopyPath = function (event) {
+            event.stopPropagation();
+            let info = _getSelectionInfo(el);
+            if (!info.path) {
+                toast('未找到当前节点路径！');
+                return;
+            }
+            _copyToClipboard(info.path, '当前节点 JSONPath 已复制！');
+        };
+
         // 删除json片段
         let fnDel = function (event) {
             event.stopPropagation();
@@ -948,6 +965,7 @@ window.Formatter = (function () {
             if (!jfOptEl.length) {
                 jfOptEl = $('<b class="boxOpt">' +
                     '<a class="opt-copy" title="复制当前选中节点的JSON数据">复制</a>|' +
+                    '<a class="opt-path" title="复制当前选中节点的 JSONPath">复制路径</a>|' +
                     '<a class="opt-download" target="_blank" title="下载当前选中节点的JSON数据">下载</a>|' +
                     '<a class="opt-del" title="删除当前选中节点的JSON数据">删除</a></b>').appendTo(el);
             } else {
@@ -956,6 +974,7 @@ window.Formatter = (function () {
 
             jfOptEl.find('a.opt-download').unbind('click').bind('click', fnDownload);
             jfOptEl.find('a.opt-copy').unbind('click').bind('click', fnCopy);
+            jfOptEl.find('a.opt-path').unbind('click').bind('click', fnCopyPath);
             jfOptEl.find('a.opt-del').unbind('click').bind('click', fnDel);
         }
 
@@ -1084,7 +1103,7 @@ window.Formatter = (function () {
         }
 
         let value = _getJsonValueByKeys(_getJsonPathKeys(el));
-        let text = JSON.stringify(value, null, 4);
+        let text = _safeStringify(value, 4);
         return text === undefined ? '' : text;
     };
 
@@ -1635,6 +1654,32 @@ window.Formatter = (function () {
         }
     };
 
+    let _renderRawParseFallback = function(jsonStr, error) {
+        let raw = String(jsonStr || '');
+        let message = error && error.message ? error.message : '未知错误';
+        let totalLength = raw.length.toLocaleString('zh-CN');
+        let previewRaw = raw.length > RAW_PARSE_FALLBACK_PREVIEW_LIMIT
+            ? raw.slice(0, RAW_PARSE_FALLBACK_PREVIEW_LIMIT)
+            : raw;
+        let truncatedNote = raw.length > RAW_PARSE_FALLBACK_PREVIEW_LIMIT
+            ? '；当前仅预览前 ' + RAW_PARSE_FALLBACK_PREVIEW_LIMIT.toLocaleString('zh-CN') + ' 字符，完整原文可复制'
+            : '';
+        cachedJsonString = raw;
+        jfPre.html(htmlspecialchars(previewRaw));
+        jfContent.html(
+            '<section class="fh-raw-source-fallback" role="region" aria-label="原文预览">' +
+                '<div class="fh-raw-source-fallback-head">' +
+                    '<div class="fh-raw-source-fallback-copy">' +
+                        '<strong>原文预览</strong>' +
+                        '<span>JSON 解析失败，已保留原文：' + htmlspecialchars(message) + htmlspecialchars(truncatedNote) + '</span>' +
+                    '</div>' +
+                    '<span class="fh-raw-source-fallback-meta">' + totalLength + ' 字符</span>' +
+                '</div>' +
+                '<pre class="fh-raw-source-fallback-pre"><code>' + htmlspecialchars(previewRaw) + '</code></pre>' +
+            '</section>'
+        );
+    };
+
     /**
      * 执行代码格式化
      * 支持异步worker
@@ -1655,7 +1700,7 @@ window.Formatter = (function () {
             jfPre.html(htmlspecialchars(cachedJsonString));
         } catch (e) {
             console.error('JSON解析失败:', e);
-            jfContent.html(`<div class="error">JSON解析失败: ${e.message}</div>`);
+            _renderRawParseFallback(jsonStr, e);
             return;
         }
 
