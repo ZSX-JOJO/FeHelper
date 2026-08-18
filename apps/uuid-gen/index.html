@@ -79,11 +79,23 @@
                 </div>
                 <textarea class="form-control x-result" id="nanoIdResult" readonly></textarea>
             </div>
+
+            <div class="x-section">
+                <h4>ULID 生成器</h4>
+                <div class="x-row">
+                    <label>数量：</label>
+                    <input type="number" id="ulidCount" value="5" min="1" max="100" class="form-control ui-d-ib" style="width:80px">
+                    <button class="btn btn-primary ui-ml-20" id="btnGenULID">生成</button>
+                    <span class="x-help-text">26 位 Crockford Base32，按毫秒时间有序</span>
+                </div>
+                <textarea class="form-control x-result" id="ulidResult" readonly></textarea>
+            </div>
         </div>
     </div>
     <script src="../static/vendor/jquery/jquery-3.3.1.min.js"></script>
     <script type="text/javascript" src="../static/js/utils.js"></script>
     <script src="../static/js/tool-layout.js"></script>
+    <script type="text/javascript" src="ulid-core.js"></script>
     <script type="text/javascript" src="index.js"></script>
     </body>
 </html>

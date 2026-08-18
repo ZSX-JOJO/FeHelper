@@ -33,7 +33,12 @@ describe('popup open regressions', () => {
         expect(popup).toContain('const response = await chrome.runtime.sendMessage(request);');
         expect(popup).toContain('if (response && response.ok === false) {');
         expect(popup).toContain("throw new Error(response.error || '后台未能打开工具页面');");
-        expect(popup).toContain('await chrome.tabs.create({');
+        const openFailureBranch = popup.slice(
+            popup.indexOf("throw new Error(response.error || '后台未能打开工具页面');"),
+            popup.indexOf('openOptionsPage()', popup.indexOf("throw new Error(response.error || '后台未能打开工具页面');"))
+        );
+        expect(openFailureBranch).not.toContain('chrome.tabs.create');
+        expect(openFailureBranch).toContain("console.error('工具页面打开失败:', e);");
         expect(background).toContain('FeHelperBg.DynamicToolRunner = async function (configs)');
         expect(background).toContain("return {ok: false, error: '工具配置无效'}");
         expect(background).toContain('return {ok: true, action: \'create\', tabId: tab && tab.id};');

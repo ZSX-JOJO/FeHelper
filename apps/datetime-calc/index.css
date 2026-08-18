@@ -1507,6 +1507,27 @@
     margin-bottom: 5px;
 }
 
+.dst-control {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+}
+
+.dst-mode-section,
+.dst-offset-section {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-hint {
+    color: #718096;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 .timezone-arrow {
     color: #4a5568;
     font-size: 16px;

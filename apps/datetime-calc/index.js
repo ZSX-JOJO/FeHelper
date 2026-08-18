@@ -50,6 +50,8 @@ var AppState = {
         inputTime: '',
         fromTimezone: 'Asia/Shanghai',
         toTimezone: 'America/New_York',
+        dstMode: 'auto',
+        manualOffset: '',
         result: null
     },
     
@@ -79,11 +81,12 @@ var TimeUtils = {
             };
         }
         
-        // Unix时间戳(毫秒) - 13位数字  
-        if (/^\d{13}$/.test(input)) {
+        // Unix时间戳(毫秒) - 11-13位数字
+        // 兼容历史短毫秒时间戳（例如 949680000000），同时避免把年份/短数字误判为毫秒。
+        if (/^\d{11,13}$/.test(input)) {
             return {
                 timestamp: parseInt(input),
-                format: 'Unix时间戳(毫秒)'
+                format: 'Unix时间戳(毫秒, 11-13位)'
             };
         }
         
@@ -530,6 +533,19 @@ var TimestampApp = {
                 self.convertTimezone();
             });
         }
+
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        if (dstModeSelect) {
+            dstModeSelect.addEventListener('change', function() {
+                AppState.timezoneExpert.dstMode = dstModeSelect.value === 'manual' ? 'manual' : 'auto';
+            });
+        }
+        if (dstOffsetInput) {
+            dstOffsetInput.addEventListener('input', function() {
+                AppState.timezoneExpert.manualOffset = dstOffsetInput.value.trim();
+            });
+        }
         
         // 数据库工具按钮
         var dbGenerateBtn = DOMUtils.$('.db-generate-btn');
@@ -553,6 +569,15 @@ var TimestampApp = {
                 AppState.selectedTimezone = browserTimezone;
             }
             timezoneSelect.value = AppState.selectedTimezone;
+        }
+
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        if (dstModeSelect) {
+            dstModeSelect.value = AppState.timezoneExpert.dstMode || 'auto';
+        }
+        if (dstOffsetInput) {
+            dstOffsetInput.value = AppState.timezoneExpert.manualOffset || '';
         }
         
         // 初始化时间显示
@@ -1057,6 +1082,10 @@ var TimestampApp = {
         var timeValue = timeInput.value.trim();
         var fromTimezone = fromSelect.value;
         var toTimezone = toSelect.value;
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        var dstMode = dstModeSelect && dstModeSelect.value === 'manual' ? 'manual' : 'auto';
+        var manualOffset = dstOffsetInput ? dstOffsetInput.value.trim() : '';
         
         if (!timeValue) {
             DOMUtils.setHTML(resultsDiv, '<div class="text-warning">请输入时间</div>');
@@ -1065,7 +1094,27 @@ var TimestampApp = {
         
         try {
             // 1. 解析为UTC时间戳
-            var utcTimestamp = getUTCTimestampFromLocal(timeValue, fromTimezone);
+            var normalizedTime = TimeUtils.normalizeDateTimeInput(timeValue);
+            if (!normalizedTime) {
+                throw new Error('请输入格式为 yyyy-MM-dd HH:mm:ss 的时间');
+            }
+            var utcTimestamp;
+            var sourceLabel = fromTimezone;
+            var strategyLabel = '自动：IANA/Intl 历史时区规则';
+            if (dstMode === 'manual') {
+                var offsetMinutes = parseUTCOffsetMinutes(manualOffset);
+                utcTimestamp = getUTCTimestampFromFixedOffsetLocal(normalizedTime, offsetMinutes);
+                sourceLabel = formatUTCOffset(offsetMinutes);
+                strategyLabel = '手动：固定 UTC 偏移 ' + sourceLabel;
+            } else {
+                utcTimestamp = getUTCTimestampFromLocal(normalizedTime, fromTimezone);
+            }
+
+            AppState.timezoneExpert.inputTime = normalizedTime;
+            AppState.timezoneExpert.fromTimezone = fromTimezone;
+            AppState.timezoneExpert.toTimezone = toTimezone;
+            AppState.timezoneExpert.dstMode = dstMode;
+            AppState.timezoneExpert.manualOffset = manualOffset;
 
             // 2. 用Intl.DateTimeFormat格式化为目标时区的本地时间
             var dt = new Date(utcTimestamp);
@@ -1081,7 +1130,8 @@ var TimestampApp = {
 
             var html = '<div class="result-item">';
             html += '<strong>时区转换结果：</strong><br>';
-            html += '原时间：' + timeValue + ' (' + fromTimezone + ')<br>';
+            html += '原时间：' + normalizedTime + ' (' + sourceLabel + ')<br>';
+            html += '夏令时策略：' + strategyLabel + '<br>';
             html += '目标时区：' + toTimezone + '<br>';
             html += '转换结果：' + targetStr + '<br>';
             html += '</div>';
@@ -1202,6 +1252,37 @@ window.TimestampApp = TimestampApp;
 window.AppState = AppState;
 window.TimeUtils = TimeUtils;
 
+function parseUTCOffsetMinutes(offsetText) {
+    var text = String(offsetText || '').trim();
+    var match = text.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/);
+    if (!match) {
+        throw new Error('请输入有效的 UTC 偏移，例如 +08:00、-0500 或 -5');
+    }
+
+    var sign = match[1] === '-' ? -1 : 1;
+    var hours = Number(match[2]);
+    var minutes = Number(match[3] || 0);
+    if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) {
+        throw new Error('UTC 偏移范围必须在 -14:00 到 +14:00 之间');
+    }
+    return sign * (hours * 60 + minutes);
+}
+
+function formatUTCOffset(offsetMinutes) {
+    var sign = offsetMinutes < 0 ? '-' : '+';
+    var abs = Math.abs(offsetMinutes);
+    var hours = String(Math.floor(abs / 60)).padStart(2, '0');
+    var minutes = String(abs % 60).padStart(2, '0');
+    return 'UTC' + sign + hours + ':' + minutes;
+}
+
+function getUTCTimestampFromFixedOffsetLocal(timeStr, offsetMinutes) {
+    var m = String(timeStr || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) throw new Error('请输入格式为 yyyy-MM-dd HH:mm:ss 的时间');
+    var y = Number(m[1]), mon = Number(m[2]), d = Number(m[3]), h = Number(m[4]), min = Number(m[5]), s = Number(m[6]);
+    return Date.UTC(y, mon - 1, d, h, min, s) - offsetMinutes * 60000;
+}
+
 // === 新增：更准确的原生JS IANA时区转换辅助函数 ===
 function getUTCTimestampFromLocal(timeStr, tz) {
     // 只支持 yyyy-MM-dd HH:mm:ss
@@ -1235,6 +1316,11 @@ function getUTCTimestampFromLocal(timeStr, tz) {
     // 4. 用utcGuess + diff 得到正确的UTC时间戳
     return utcGuess + diff;
 }
+
+window.parseUTCOffsetMinutes = parseUTCOffsetMinutes;
+window.formatUTCOffset = formatUTCOffset;
+window.getUTCTimestampFromFixedOffsetLocal = getUTCTimestampFromFixedOffsetLocal;
+window.getUTCTimestampFromLocal = getUTCTimestampFromLocal;
 
 // 事件委托：解析结果区域点击复制
 (function() {

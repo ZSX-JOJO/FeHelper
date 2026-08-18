@@ -1561,6 +1561,13 @@ html.fh-jf .fh-json-error-actions .fh-error-tool-action:focus {
     padding: 0 0 0 22px;
 }
 
+.fh-large-json-plain {
+    display: block;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 html.fh-jf .item {
     padding-top: 2px;
     padding-bottom: 2px;

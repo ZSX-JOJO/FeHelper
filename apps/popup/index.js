@@ -3,9 +3,11 @@
  */
 
 import Awesome from '../background/awesome.js'
+import toolMap from '../background/tools.js'
 import MSG_TYPE from '../static/js/common.js';
 
 const POPUP_RECENT_TOOLS = 'popup_recent_tools';
+const POPUP_TOOL_CACHE_KEY = 'fh-popup-installed-tools-cache';
 const USER_USAGE_DATA_KEY = 'FH_USER_USAGE_DATA';
 const FH_UI_MODE = 'FH_UI_MODE';
 const FH_POPUP_UI_MODE = 'FH_POPUP_UI_MODE';
@@ -222,12 +224,14 @@ new Vue({
     },
 
     created: function () {
+        this.markStartup('created');
         this.manifest = chrome.runtime.getManifest();
-
+        this.applyCachedTools();
         this.loadTools();
     },
 
     mounted: function () {
+        this.markStartup('mounted');
         this.panelKeydownHandler = event => this.handlePanelKeydown(event);
         document.addEventListener('keydown', this.panelKeydownHandler, true);
         this.applyUiModeToDocument();
@@ -280,6 +284,58 @@ new Vue({
                     Awesome.collectAndSendClientInfo();
                 }
             }, 900);
+        },
+
+        markStartup(name) {
+            try {
+                if (window.performance && window.performance.mark) {
+                    window.performance.mark(`fh-popup-${name}`);
+                }
+            } catch (e) {}
+        },
+
+        applyCachedTools() {
+            const cachedTools = this.readCachedTools();
+            const initialTools = cachedTools && Object.keys(cachedTools).length
+                ? cachedTools
+                : this.buildSystemInstalledToolsSnapshot();
+            if (!initialTools || !Object.keys(initialTools).length) return;
+
+            this.fhTools = initialTools;
+            this.isLoading = false;
+            this.syncActiveTool();
+            this.markStartup('first-tools-ready');
+        },
+
+        readCachedTools() {
+            try {
+                const raw = window.localStorage && localStorage.getItem(POPUP_TOOL_CACHE_KEY);
+                const parsed = raw ? JSON.parse(raw) : null;
+                if (!parsed || typeof parsed !== 'object' || !parsed.tools) return null;
+                return parsed.tools;
+            } catch (e) {
+                return null;
+            }
+        },
+
+        buildSystemInstalledToolsSnapshot() {
+            return Object.keys(toolMap).reduce((tools, toolName) => {
+                const tool = toolMap[toolName];
+                if (tool && tool.systemInstalled) {
+                    tools[toolName] = Object.assign({}, tool, { installed: true });
+                }
+                return tools;
+            }, {});
+        },
+
+        cacheInstalledTools(tools) {
+            try {
+                if (!window.localStorage || !tools || typeof tools !== 'object') return;
+                localStorage.setItem(POPUP_TOOL_CACHE_KEY, JSON.stringify({
+                    savedAt: Date.now(),
+                    tools
+                }));
+            } catch (e) {}
         },
 
         notifyPopupOpened() {
@@ -364,13 +420,17 @@ new Vue({
                     this.fhTools = tools;
                 }
 
+                this.cacheInstalledTools(this.fhTools);
                 this.applyPopupMeta(meta);
                 this.isLoading = false;
                 this.syncActiveTool();
+                this.markStartup('tools-refreshed');
             } catch (error) {
                 console.error('加载工具列表失败:', error);
-                this.fhTools = {};
-                this.isLoading = false;
+                if (!Object.keys(this.fhTools || {}).length) {
+                    this.fhTools = {};
+                    this.isLoading = false;
+                }
             }
         },
 
@@ -744,14 +804,7 @@ new Vue({
                 }
                 !!tool.noPage && setTimeout(window.close, 200);
             } catch (e) {
-                try {
-                    await chrome.tabs.create({
-                        url: `/${toolName}/index.html` + (request.query ? `?${request.query}` : ''),
-                        active: true
-                    });
-                } catch (fallbackError) {
-                    console.error('工具页面打开失败:', e, fallbackError);
-                }
+                console.error('工具页面打开失败:', e);
             }
         },
 

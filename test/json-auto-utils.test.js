@@ -106,6 +106,55 @@ describe('json-auto-utils', () => {
         expect(utils.parseJSONLike('{"status":"ok"}', parseOptions).value.status).toBe('ok');
     });
 
+    it('Issue #634: 普通 HTML 页面中的对象文本不会被当成独立 JSON 文档', () => {
+        const candidate = utils.getStandaloneHTMLJSONCandidate({
+            directText: '',
+            preTexts: [],
+            otherElementTexts: ['登录成功', '{status:"ok"}'],
+        });
+
+        expect(candidate).toBe(false);
+    });
+
+    it('Issue #634: 独立 body>pre 中的真正 JSON 仍会自动格式化', () => {
+        const source = '{"status":"ok","items":[1,2]}';
+        const candidate = utils.getStandaloneHTMLJSONCandidate({
+            directText: '',
+            preTexts: [source],
+            otherElementTexts: [],
+        });
+
+        expect(candidate).toBe(source);
+    });
+
+    it('Issue #634: 仅包含纯文本 JSON 的 HTML body 仍会自动格式化', () => {
+        const source = '{"status":"ok"}';
+        const candidate = utils.getStandaloneHTMLJSONCandidate({
+            directText: source,
+            preTexts: [],
+            otherElementTexts: [],
+        });
+
+        expect(candidate).toBe(source);
+    });
+
+    it('Issue #634: HTML body/pre 只接受严格 JSON，且不执行宽松对象表达式', () => {
+        globalThis.__fh_json_probe = 0;
+
+        expect(utils.getStandaloneHTMLJSONCandidate({
+            directText: '{status:"ok"}',
+            preTexts: [],
+            otherElementTexts: [],
+        })).toBe(false);
+        expect(utils.getStandaloneHTMLJSONCandidate({
+            directText: '',
+            preTexts: ['{status:(globalThis.__fh_json_probe=7,"ok")}'],
+            otherElementTexts: [],
+        })).toBe(false);
+        expect(globalThis.__fh_json_probe).toBe(0);
+        delete globalThis.__fh_json_probe;
+    });
+
     it('Issue #608: raw YAML/YML resources are not JSON auto-format targets', () => {
         expect(utils.isYAMLResource(
             'https://raw.githubusercontent.com/bitxeno/go-docker-skeleton/refs/heads/master/.github/workflows/release.yml',
@@ -130,5 +179,80 @@ describe('json-auto-utils', () => {
 
         expect(internalKey).toBe('__FH_PRESERVE_INTEGER_KEY__2');
         expect(utils.normalizePreservedJsonPointer('/' + internalKey + '/name')).toBe('/2/name');
+    });
+
+    it('Issue #642/#640: parsed cache 可按显示路径读取数字字符串 key', () => {
+        const parsed = utils.parseJSONLike('{"2":{"name":"b"},"rows":[{"1":"a"}]}');
+
+        expect(utils.getPreservedValueAtPath(parsed.value, ['2', 'name'])).toBe('b');
+        expect(utils.getPreservedValueAtPath(parsed.value, ['rows', '[0]', '1'])).toBe('a');
+    });
+
+    it('Issue #642: 删除节点时同步 parsed cache，祖先导出不会带回已删字段', () => {
+        const parsed = utils.parseJSONLike('{"keep":1,"drop":2,"rows":[{"1":"a","2":"b"}]}');
+
+        expect(utils.deletePreservedValueAtPath(parsed.value, ['drop'])).toBe(true);
+        expect(utils.deletePreservedValueAtPath(parsed.value, ['rows', '[0]', '1'])).toBe(true);
+        expect(utils.safeStringify(parsed.value)).toBe('{"keep":1,"rows":[{"2":"b"}]}');
+    });
+
+    it('Issue #642: 删除数组首项后重排可见节点索引与尾逗号', () => {
+        function createElement(index, hasComma) {
+            const element = {
+                attributes: { 'data-array-index': String(index) },
+                children: [],
+                setAttribute(name, value) { this.attributes[name] = value; },
+                appendChild(child) { this.children.push(child); child.parentNode = this; },
+                removeChild(child) { this.children.splice(this.children.indexOf(child), 1); },
+            };
+            if (hasComma) {
+                element.appendChild({ className: 'comma', textContent: ',' });
+            }
+            return element;
+        }
+
+        const visibleNodes = [createElement(1, true), createElement(2, false)];
+        const documentRef = {
+            createElement() { return { className: '', textContent: '' }; },
+        };
+
+        utils.reindexArrayElementNodes(visibleNodes, documentRef);
+
+        expect(visibleNodes.map(node => node.attributes['data-array-index'])).toEqual(['0', '1']);
+        expect(visibleNodes[0].children.map(child => child.className)).toEqual(['comma']);
+        expect(visibleNodes[1].children.map(child => child.className)).toEqual([]);
+    });
+
+    it('Issue #640: fallback anchor downloader starts the first click and cleans up', () => {
+        const events = [];
+        const link = {
+            style: {},
+            click() { events.push('click'); },
+            remove() { events.push('remove'); },
+        };
+        const documentRef = {
+            body: {
+                appendChild(node) { events.push(node === link ? 'append' : 'wrong'); },
+            },
+            createElement(tag) {
+                expect(tag).toBe('a');
+                return link;
+            },
+        };
+        const urlApi = {
+            createObjectURL() { events.push('create'); return 'blob:test'; },
+            revokeObjectURL(url) { events.push('revoke:' + url); },
+        };
+
+        expect(utils.downloadJsonBlobWithAnchor({}, '窗口名.json', { documentRef, urlApi })).toBe(true);
+        expect(link.download).toBe('窗口名.json');
+        expect(link.href).toBe('blob:test');
+        expect(events).toEqual(['create', 'append', 'click', 'remove', 'revoke:blob:test']);
+    });
+
+    it('Issue #639/#636: 大型 JSON 触发完整文本视图安全降级', () => {
+        expect(utils.shouldUsePlainJsonView({ ok: true }, 20)).toBe(false);
+        expect(utils.shouldUsePlainJsonView(Array.from({ length: 20001 }, (_, index) => index), 100)).toBe(true);
+        expect(utils.shouldUsePlainJsonView({ payload: 'x' }, 2000001)).toBe(true);
     });
 });

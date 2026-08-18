@@ -280,13 +280,22 @@ window.JsonAutoFormat = (() => {
 
     let _renderOmniSearchState = state => {
         state = state || (window.Formatter && Formatter.getSearchState && Formatter.getSearchState()) || {current: 0, total: 0};
+        let searchDisabled = !!state.disabled || !!(
+            window.Formatter &&
+            Formatter.isLargeJsonPlainViewEnabled &&
+            Formatter.isLargeJsonPlainViewEnabled()
+        );
         let text = state.total ? (state.current + '/' + state.total) : '0/0';
         $('#fhJsonSearchCount')
-            .text(text)
-            .toggleClass('is-empty', !state.total);
+            .text(searchDisabled ? '⌘F' : text)
+            .toggleClass('is-empty', searchDisabled || !state.total);
         $('#fhJsonSearchTrigger')
-            .attr('title', state.total ? ('搜索结果：' + text) : '搜索 Key / 值')
+            .attr('title', searchDisabled ? (state.reason || '大型 JSON 请使用浏览器查找') : (state.total ? ('搜索结果：' + text) : '搜索 Key / 值'))
             .toggleClass('has-result', !!state.total);
+        $('#fhJsonSearchInput')
+            .prop('disabled', searchDisabled || !_isOmniMode())
+            .attr('placeholder', searchDisabled ? '请使用浏览器查找' : '搜索 Key / 值');
+        $('#fhJsonSearchPrev,#fhJsonSearchNext').prop('disabled', searchDisabled || !_isOmniMode());
     };
 
     let _refreshOmniSelectionState = () => {
@@ -325,6 +334,8 @@ window.JsonAutoFormat = (() => {
             .attr('aria-hidden', isOmni ? 'false' : 'true')
             .find('input,button')
             .prop('disabled', !isOmni);
+
+        _renderOmniSearchState();
 
         _syncExcludeSiteButtonState();
 
@@ -452,7 +463,7 @@ window.JsonAutoFormat = (() => {
             event.detail && _refreshOmniSelectionState();
         });
         document.addEventListener('fh-json-format-ready', event => {
-            _renderOmniSearchState();
+            _syncOmniToolbarState();
         });
     };
 
@@ -1259,23 +1270,36 @@ window.JsonAutoFormat = (() => {
 
         // 如果是 HTML 页面，也要看一下内容是不是明显就是个JSON，如果不是，则也不进行 json 格式化
         if (document.contentType === 'text/html' && document.body) {
-            // 使用 DOMParser 解析 HTML
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(document.body.outerHTML, "text/html");
-            // 移除不需要的标签
-            doc.querySelectorAll('style, script').forEach(el => el.remove());
-            // 获取清理后的文本
-            const cleanText = doc.body.textContent;
             const htmlParseOptions = {
                 allowExtractJSONFragment: false,
                 allowJSONP: false
             };
-            let jsonObj = _getJsonObject(cleanText, htmlParseOptions);
-            if(!jsonObj) {
+            const utils = _getJsonAutoUtils();
+            if (typeof utils.getStandaloneHTMLJSONCandidate !== 'function') {
                 return false;
             }
-            let pre = document.querySelectorAll('body>pre')[0] || {textContent: ""};
-            return _getJsonContentFromDOM(pre, htmlParseOptions);
+
+            let directText = '';
+            Array.from(document.body.childNodes).forEach(node => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    directText += node.textContent || '';
+                }
+            });
+
+            const preElements = Array.from(document.querySelectorAll('body>pre'));
+            const otherElementTexts = Array.from(document.body.children)
+                .filter(elm => {
+                    const tagName = elm.tagName.toLowerCase();
+                    return tagName !== 'pre' && !['script', 'style', 'link'].includes(tagName);
+                })
+                .filter(elm => elm.offsetHeight + elm.offsetWidth !== 0)
+                .map(elm => elm.innerText || elm.textContent || '');
+
+            return utils.getStandaloneHTMLJSONCandidate({
+                directText,
+                preTexts: preElements.map(elm => elm.textContent || ''),
+                otherElementTexts,
+            }, _getJsonParseOptions(htmlParseOptions));
         }
 
         let pre = document.querySelectorAll('body>pre')[0] || {textContent: ""};

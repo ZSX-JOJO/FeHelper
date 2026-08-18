@@ -209,6 +209,20 @@ export function normalizePreservedKey(key) {
     return key;
 }
 
+export function getPreservedProperty(value, key) {
+    if (value === null || value === undefined || typeof value !== 'object') {
+        return { found: false, key, value: undefined };
+    }
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+        return { found: true, key, value: value[key] };
+    }
+    const preservedKey = PRESERVED_INTEGER_KEY_PREFIX + key;
+    if (Object.prototype.hasOwnProperty.call(value, preservedKey)) {
+        return { found: true, key: preservedKey, value: value[preservedKey] };
+    }
+    return { found: false, key, value: undefined };
+}
+
 export function normalizePreservedJsonPointer(path) {
     if (typeof path !== 'string') return path;
 
@@ -364,6 +378,136 @@ export function safeStringify(obj, space) {
         .replace(/"__FH_NUMSTR__(-?\d+)"/g, '$1')
         .replace(/"__FH_BIGNUM__(-?\d+(?:\.\d+)?)"/g, '$1')
         .replace(new RegExp('"' + PRESERVED_INTEGER_KEY_PREFIX + '(\\d+)":', 'g'), '"$1":');
+}
+
+export function sanitizeJsonDownloadFilename(note, fallbackPrefix = 'FeHelper', maxLength = 64) {
+    const fallback = fallbackPrefix || 'FeHelper';
+    let value = String(note || '')
+        .trim()
+        .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/_{2,}/g, '_')
+        .replace(/^[._\-\s]+|[._\-\s]+$/g, '');
+
+    if (!value) {
+        value = fallback;
+    }
+
+    const limit = Math.max(12, Number(maxLength) || 64);
+    if (value.length > limit) {
+        value = value.slice(0, limit).replace(/[._\-\s]+$/g, '');
+    }
+
+    return value || fallback;
+}
+
+function mergeSchemaType(left, right) {
+    const types = [];
+    const add = (type) => {
+        if (Array.isArray(type)) {
+            type.forEach(add);
+            return;
+        }
+        if (type && !types.includes(type)) {
+            types.push(type);
+        }
+    };
+    add(left);
+    add(right);
+    return types.length === 1 ? types[0] : types;
+}
+
+function normalizeMergedSchema(schema) {
+    if (!schema) return {};
+    if (schema.type === 'integer' || schema.type === 'number' || schema.type === 'string' || schema.type === 'boolean' || schema.type === 'null') {
+        return schema;
+    }
+    return schema;
+}
+
+function mergeJsonSchemas(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+
+    if (a.type === 'object' && b.type === 'object') {
+        const properties = {};
+        const keys = Array.from(new Set(Object.keys(a.properties || {}).concat(Object.keys(b.properties || {})))).sort();
+        keys.forEach((key) => {
+            properties[key] = mergeJsonSchemas(a.properties && a.properties[key], b.properties && b.properties[key]);
+        });
+        const aRequired = new Set(a.required || []);
+        const bRequired = new Set(b.required || []);
+        const required = keys.filter((key) => aRequired.has(key) && bRequired.has(key));
+        const result = {
+            type: 'object',
+            properties,
+            additionalProperties: false,
+        };
+        if (required.length) {
+            result.required = required;
+        }
+        return result;
+    }
+
+    if (a.type === 'array' && b.type === 'array') {
+        return {
+            type: 'array',
+            items: mergeJsonSchemas(a.items, b.items) || {},
+        };
+    }
+
+    return normalizeMergedSchema({
+        type: mergeSchemaType(a.type, b.type),
+    });
+}
+
+function inferJsonSchema(value) {
+    if (value === null) {
+        return { type: 'null' };
+    }
+    if (Array.isArray(value)) {
+        return {
+            type: 'array',
+            items: value.reduce((schema, item) => mergeJsonSchemas(schema, inferJsonSchema(item)), null) || {},
+        };
+    }
+    if (typeof value === 'object') {
+        if (isBigNumberLike(value)) {
+            return { type: 'number' };
+        }
+        const keys = Object.keys(value).sort();
+        const properties = {};
+        keys.forEach((key) => {
+            properties[normalizePreservedKey(key)] = inferJsonSchema(value[key]);
+        });
+        const result = {
+            type: 'object',
+            properties,
+            additionalProperties: false,
+        };
+        if (keys.length) {
+            result.required = keys.map(normalizePreservedKey);
+        }
+        return result;
+    }
+    if (typeof value === 'bigint') {
+        return { type: 'integer' };
+    }
+    if (typeof value === 'number') {
+        return { type: Number.isInteger(value) ? 'integer' : 'number' };
+    }
+    if (typeof value === 'boolean') {
+        return { type: 'boolean' };
+    }
+    return { type: 'string' };
+}
+
+export function buildJsonSchema(value) {
+    return {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        title: 'RootSchema',
+        ...inferJsonSchema(value),
+    };
 }
 
 // ─── 日期格式化（替代 Date.prototype.format 的纯函数版本）──

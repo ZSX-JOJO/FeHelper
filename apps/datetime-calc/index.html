@@ -416,6 +416,20 @@
                                                 </select>
                                             </div>
                                         </div>
+                                        <div class="dst-control">
+                                            <div class="dst-mode-section">
+                                                <label class="form-label">夏令时策略</label>
+                                                <select class="form-control dst-mode-select">
+                                                    <option value="auto">自动：使用 IANA/Intl 历史时区规则</option>
+                                                    <option value="manual">手动：按固定 UTC 偏移解析输入时间</option>
+                                                </select>
+                                            </div>
+                                            <div class="dst-offset-section">
+                                                <label class="form-label">手动 UTC 偏移</label>
+                                                <input type="text" class="form-control dst-offset-input" placeholder="+08:00 / -0500 / -5">
+                                                <small class="form-hint">仅在手动策略下生效；目标时区仍使用 IANA/Intl 格式化。</small>
+                                            </div>
+                                        </div>
                                         <button class="btn btn-primary timezone-convert-btn"> 转换时区</button>
                                     </div>
                                 </div>

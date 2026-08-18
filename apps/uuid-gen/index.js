@@ -112,6 +112,15 @@
         $('nanoIdResult').value = results.join('\n');
     }
 
+    function generateULIDs() {
+        var count = Math.min(Math.max(parseInt($('ulidCount').value) || 1, 1), 100);
+        var results = [];
+        for (var i = 0; i < count; i++) {
+            results.push(window.FHUlid.generateULID());
+        }
+        $('ulidResult').value = results.join('\n');
+    }
+
     function selectAll(e) {
         var el = e && e.target;
         if (el && typeof el.select === 'function') {
@@ -144,6 +153,7 @@
     $('btnGenSnowflake').addEventListener('click', generateSnowflakes);
     $('btnParseSnowflake').addEventListener('click', parseSnowflake);
     $('btnGenNanoId').addEventListener('click', generateNanoIds);
+    $('btnGenULID').addEventListener('click', generateULIDs);
 
     $('btnDonate').addEventListener('click', function (e) {
         e.preventDefault();
@@ -166,5 +176,6 @@
     });
 
     generateUUIDs();
+    generateULIDs();
     loadPatchHotfix();
 })();

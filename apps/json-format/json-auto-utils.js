@@ -210,9 +210,8 @@
         }).join('/');
     }
 
-    function parseWithBigInt(text) {
-        const fixed = normalizeLooseJSONSource(text);
-        const ordered = markIntegerIndexKeys(fixed);
+    function parseStrictJSONWithBigInt(text) {
+        const ordered = markIntegerIndexKeys(String(text || ''));
 
         const marked = ordered.replace(
             /([:,\[]\s*)(-?\d{16,})(\s*)(?=(?:,|\]|\}|$))/g,
@@ -232,6 +231,10 @@
             }
             return value;
         });
+    }
+
+    function parseWithBigInt(text) {
+        return parseStrictJSONWithBigInt(normalizeLooseJSONSource(text));
     }
 
     function isJSONContainer(value) {
@@ -489,6 +492,168 @@
         return null;
     }
 
+    function getStandaloneHTMLJSONCandidate(signals, options) {
+        signals = signals || {};
+        const directText = String(signals.directText || '').trim();
+        const preTexts = (signals.preTexts || [])
+            .map((text) => String(text || '').trim())
+            .filter(Boolean);
+        const otherElementTexts = (signals.otherElementTexts || [])
+            .map((text) => String(text || '').trim())
+            .filter(Boolean);
+
+        if (otherElementTexts.length) return false;
+
+        let candidate = '';
+        if (preTexts.length === 1 && !directText) {
+            candidate = preTexts[0];
+        } else if (preTexts.length === 0 && directText) {
+            candidate = directText;
+        } else {
+            return false;
+        }
+
+        try {
+            const parsed = parseStrictJSONWithBigInt(candidate);
+            return parsed !== null && typeof parsed === 'object' ? candidate : false;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    function getPreservedValueAtPath(rootValue, keys) {
+        let value = rootValue;
+        (keys || []).forEach((key) => {
+            if (value === null || value === undefined) {
+                value = undefined;
+                return;
+            }
+            if (typeof key === 'string' && key.startsWith('[') && key.endsWith(']')) {
+                value = value[parseInt(key.slice(1, -1), 10)];
+                return;
+            }
+            if (Object.prototype.hasOwnProperty.call(value, key)) {
+                value = value[key];
+                return;
+            }
+            value = value[PRESERVED_INTEGER_KEY_PREFIX + key];
+        });
+        return value;
+    }
+
+    function getPreservedObjectKey(value, key) {
+        if (value === null || value === undefined || typeof value !== 'object') return null;
+        if (Object.prototype.hasOwnProperty.call(value, key)) return key;
+        const preservedKey = PRESERVED_INTEGER_KEY_PREFIX + key;
+        return Object.prototype.hasOwnProperty.call(value, preservedKey) ? preservedKey : null;
+    }
+
+    function deletePreservedValueAtPath(rootValue, keys) {
+        keys = Array.isArray(keys) ? keys.slice() : [];
+        if (!keys.length) return false;
+        const lastKey = keys.pop();
+        const parent = getPreservedValueAtPath(rootValue, keys);
+        if (parent === null || parent === undefined) return false;
+
+        if (typeof lastKey === 'string' && lastKey.startsWith('[') && lastKey.endsWith(']')) {
+            if (!Array.isArray(parent)) return false;
+            const index = parseInt(lastKey.slice(1, -1), 10);
+            if (!Number.isInteger(index) || index < 0 || index >= parent.length) return false;
+            parent.splice(index, 1);
+            return true;
+        }
+
+        const actualKey = getPreservedObjectKey(parent, lastKey);
+        if (actualKey === null) return false;
+        delete parent[actualKey];
+        return true;
+    }
+
+    function reindexArrayElementNodes(elements, documentRef) {
+        const nodes = Array.from(elements || []);
+        nodes.forEach(function (element, index) {
+            if (!element || typeof element.setAttribute !== 'function') return;
+            element.setAttribute('data-array-index', String(index));
+
+            const directComma = Array.from(element.children || []).find(function (child) {
+                return String(child.className || '').split(/\s+/).includes('comma');
+            });
+            const shouldHaveComma = index < nodes.length - 1;
+            if (shouldHaveComma && !directComma) {
+                const ownerDocument = documentRef || element.ownerDocument;
+                if (!ownerDocument || typeof ownerDocument.createElement !== 'function') return;
+                const comma = ownerDocument.createElement('span');
+                comma.className = 'comma';
+                comma.textContent = ',';
+                element.appendChild(comma);
+            } else if (!shouldHaveComma && directComma) {
+                if (typeof directComma.remove === 'function') {
+                    directComma.remove();
+                } else if (typeof element.removeChild === 'function') {
+                    element.removeChild(directComma);
+                }
+            }
+        });
+        return nodes;
+    }
+
+    function downloadJsonBlobWithAnchor(blob, filename, environment) {
+        environment = environment || {};
+        const documentRef = environment.documentRef || (typeof document !== 'undefined' ? document : null);
+        const urlApi = environment.urlApi || (typeof URL !== 'undefined' ? URL : null);
+        if (!documentRef || !documentRef.body || !documentRef.createElement || !urlApi || !urlApi.createObjectURL) {
+            return false;
+        }
+
+        const objectUrl = urlApi.createObjectURL(blob);
+        const link = documentRef.createElement('a');
+        link.download = filename;
+        link.href = objectUrl;
+        link.style.display = 'none';
+        documentRef.body.appendChild(link);
+        link.click();
+        if (typeof link.remove === 'function') {
+            link.remove();
+        } else if (link.parentNode) {
+            link.parentNode.removeChild(link);
+        }
+        if (typeof urlApi.revokeObjectURL === 'function') {
+            urlApi.revokeObjectURL(objectUrl);
+        }
+        return true;
+    }
+
+    function shouldUsePlainJsonView(value, sourceLength, options) {
+        options = options || {};
+        const characterLimit = Number(options.characterLimit) || 2000000;
+        const nodeLimit = Number(options.nodeLimit) || 20000;
+        if (Number(sourceLength) > characterLimit) return true;
+
+        const stack = [value];
+        const seen = typeof WeakSet === 'function' ? new WeakSet() : null;
+        let nodeCount = 0;
+        while (stack.length) {
+            const current = stack.pop();
+            nodeCount += 1;
+            if (nodeCount > nodeLimit) return true;
+            if (!current || typeof current !== 'object' || isBigNumberLike(current)) continue;
+            if (seen) {
+                if (seen.has(current)) continue;
+                seen.add(current);
+            }
+            const keys = Object.keys(current);
+            nodeCount += keys.length;
+            if (nodeCount > nodeLimit) return true;
+            keys.forEach((key) => {
+                const child = current[key];
+                if (child && typeof child === 'object' && !isBigNumberLike(child)) {
+                    stack.push(child);
+                }
+            });
+        }
+        return false;
+    }
+
     function coerceDecodedJSONSource(source, decodedSource, options) {
         const parsed = parseJSONLike(decodedSource, options);
         if (!parsed) {
@@ -516,6 +681,11 @@
     return {
         isBigNumberLike,
         isYAMLResource,
+        getStandaloneHTMLJSONCandidate,
+        getPreservedValueAtPath,
+        deletePreservedValueAtPath,
+        reindexArrayElementNodes,
+        downloadJsonBlobWithAnchor,
         markIntegerIndexKeys,
         normalizePreservedKey,
         normalizePreservedJsonPointer,
@@ -525,6 +695,7 @@
         unpackTopLevelEscapedJSON,
         safeStringify,
         parseJSONLike,
+        shouldUsePlainJsonView,
         coerceDecodedJSONSource,
     };
 });

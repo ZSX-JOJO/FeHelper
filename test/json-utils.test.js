@@ -21,6 +21,9 @@ import {
     createSafeToastHTML,
     normalizePreservedKey,
     normalizePreservedJsonPointer,
+    getPreservedProperty,
+    sanitizeJsonDownloadFilename,
+    buildJsonSchema,
 } from '../apps/json-format/json-utils.js';
 
 // ═══════════════════════════════════════════════════════
@@ -354,6 +357,59 @@ describe('safeStringify', () => {
         const obj = { data: { id: BigInt('1234567890123456789') } };
         const result = safeStringify(obj);
         expect(result).toContain('1234567890123456789');
+    });
+
+    it('Issue #640: 数字字符串 key 占位符不会泄漏到压缩/下载输出', () => {
+        const parsed = parseWithBigInt('{"2":"b","1":{"3":1234567890123456789}}');
+        const result = safeStringify(parsed);
+        expect(result).toBe('{"2":"b","1":{"3":1234567890123456789}}');
+        expect(result).not.toContain('__FH_PRESERVE_INTEGER_KEY__');
+    });
+});
+
+describe('getPreservedProperty', () => {
+    it('Issue #640: JSONPath 可读取内部保序的数字字符串 key', () => {
+        const parsed = parseWithBigInt('{"2":"b","normal":"ok"}');
+
+        expect(getPreservedProperty(parsed, '2')).toEqual({ found: true, key: '__FH_PRESERVE_INTEGER_KEY__2', value: 'b' });
+        expect(getPreservedProperty(parsed, 'normal')).toEqual({ found: true, key: 'normal', value: 'ok' });
+        expect(getPreservedProperty(parsed, 'missing')).toEqual({ found: false, key: 'missing', value: undefined });
+    });
+});
+
+describe('sanitizeJsonDownloadFilename', () => {
+    it('Issue #638: 优先使用窗口备注并清理非法字符', () => {
+        expect(sanitizeJsonDownloadFilename(' 订单 / 明细:2026*08?18 ')).toBe('订单_明细_2026_08_18');
+    });
+
+    it('Issue #638: 空备注回退并限制长度', () => {
+        expect(sanitizeJsonDownloadFilename('', 'FeHelper-20260818120000')).toBe('FeHelper-20260818120000');
+        expect(sanitizeJsonDownloadFilename('a'.repeat(80), 'FeHelper', 32)).toHaveLength(32);
+    });
+});
+
+describe('buildJsonSchema', () => {
+    it('Issue #637: 离线推断对象、数组、nullable 和 required 字段', () => {
+        const schema = buildJsonSchema({
+            id: BigInt('1234567890123456789'),
+            name: 'FeHelper',
+            active: true,
+            score: 9.5,
+            meta: null,
+            tags: ['dev', null],
+            rows: [{ a: 1, b: 'x' }, { a: 2 }],
+        });
+
+        expect(schema.$schema).toBe('https://json-schema.org/draft/2020-12/schema');
+        expect(schema.title).toBe('RootSchema');
+        expect(schema.required).toEqual(['active', 'id', 'meta', 'name', 'rows', 'score', 'tags']);
+        expect(schema.properties.id.type).toBe('integer');
+        expect(schema.properties.score.type).toBe('number');
+        expect(schema.properties.active.type).toBe('boolean');
+        expect(schema.properties.meta.type).toBe('null');
+        expect(schema.properties.tags.items.type).toEqual(['string', 'null']);
+        expect(schema.properties.rows.items.required).toEqual(['a']);
+        expect(schema.properties.rows.items.properties.b.type).toBe('string');
     });
 });
 

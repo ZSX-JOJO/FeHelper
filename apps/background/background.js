@@ -15,6 +15,14 @@ import {
     getPopupWakeupTarget,
     isInjectableTabUrl
 } from './url-policy.js';
+import {
+    buildPopupWindowOptions,
+    buildToolUrl,
+    buildToolUrlPattern,
+    resolveCreatedWindowTab,
+    shouldOpenToolInPopup,
+    shouldReuseExistingToolTab
+} from './open-mode.js';
 
 
 let BgPageInstance = (function () {
@@ -342,16 +350,22 @@ let BgPageInstance = (function () {
         }
 
         let opts = await _getOptions();
+        let openAsPopupWindow = shouldOpenToolInPopup(configs, opts);
+        let reusableTabs = shouldReuseExistingToolTab(opts)
+            ? await _queryTabs(openAsPopupWindow ? {} : {currentWindow: true})
+            : tabs;
         let isOpened = false;
         let tabId;
+        let windowId;
 
-        // 允许在新窗口打开
-        if (String(opts['FORBID_OPEN_IN_NEW_TAB']) === 'true') {
-            let reg = new RegExp("^chrome.*\\/" + tool + "\\/index.html" + (query ? "\\?" + query : '') + "$", "i");
-            for (let i = 0, len = tabs.length; i < len; i++) {
-                if (reg.test(tabs[i].url)) {
+        // 复用已有工具页时，先在所有窗口里找同 URL 的标签页。
+        if (shouldReuseExistingToolTab(opts)) {
+            let reg = buildToolUrlPattern(tool, query);
+            for (let i = 0, len = reusableTabs.length; i < len; i++) {
+                if (reg.test(reusableTabs[i].url)) {
                     isOpened = true;
-                    tabId = tabs[i].id;
+                    tabId = reusableTabs[i].id;
+                    windowId = reusableTabs[i].windowId;
                     break;
                 }
             }
@@ -359,16 +373,26 @@ let BgPageInstance = (function () {
 
         try {
             if (!isOpened) {
-                let url = `/${tool}/index.html` + (query ? "?" + query : '');
-                let tab = await chrome.tabs.create({
-                    url,
-                    active: true
-                });
+                let url = buildToolUrl(tool, query);
+                if (openAsPopupWindow && chrome.windows && chrome.windows.create) {
+                    let popupUrl = chrome.runtime.getURL(url.replace(/^\//, ''));
+                    let win = await chrome.windows.create(buildPopupWindowOptions(popupUrl));
+                    let tab = await resolveCreatedWindowTab(win, _queryTabs);
+                    if (!tab || tab.id == null) {
+                        throw new Error('弹出窗口已创建，但未找到工具标签页');
+                    }
+                    _saveContentForTab(tab.id, withContent);
+                    return {ok: true, action: 'create-window', windowId: win && win.id, tabId: tab.id};
+                }
+                let tab = await chrome.tabs.create({ url, active: true });
                 _saveContentForTab(tab && tab.id, withContent);
                 return {ok: true, action: 'create', tabId: tab && tab.id};
             }
 
             await chrome.tabs.update(tabId, {highlighted: true});
+            if (openAsPopupWindow && windowId && chrome.windows && chrome.windows.update) {
+                await chrome.windows.update(windowId, {focused: true});
+            }
             _saveContentForTab(tabId, withContent);
             await chrome.tabs.reload(tabId);
             return {ok: true, action: 'reuse', tabId};

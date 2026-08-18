@@ -104,7 +104,7 @@ let toolMap = {
     },
     'uuid-gen': {
         name: 'UUID/ID生成器',
-        tips: '生成 UUID v4、Twitter Snowflake 风格雪花 ID、NanoID，并支持解析雪花 ID 各字段',
+        tips: '生成 UUID v4、Twitter Snowflake 风格雪花 ID、NanoID、ULID，并支持解析雪花 ID 各字段',
         menuConfig: [{
             icon: 'ID',
             text: 'UUID/ID生成器'

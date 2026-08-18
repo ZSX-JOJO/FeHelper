@@ -1684,6 +1684,7 @@ new Vue({
                 [
                     'OPT_ITEM_CONTEXTMENUS',
                     'FORBID_OPEN_IN_NEW_TAB',
+                    'OPEN_TOOL_IN_POPUP_WINDOW',
                     'AUTO_APPLY_EXTENSION_UPDATE',
                     'CONTENT_SCRIPT_ALLOW_ALL_FRAMES',
                     'JSON_PAGE_FORMAT',

@@ -389,6 +389,15 @@
                                 </span>
                             </label>
 
+                            <label class="setting-toggle-row" for="OPEN_TOOL_IN_POPUP_WINDOW">
+                                <input class="setting-switch-input" type="checkbox" value="OPEN_TOOL_IN_POPUP_WINDOW" id="OPEN_TOOL_IN_POPUP_WINDOW" v-model="selectedOpts"/>
+                                <span class="setting-switch" aria-hidden="true"></span>
+                                <span class="setting-copy">
+                                    <strong>工具以弹出窗口打开</strong>
+                                    <small>从 popup 或右键菜单打开普通工具页时使用独立窗口；页面内取色、截图等工具仍在当前页面执行。</small>
+                                </span>
+                            </label>
+
                             <label class="setting-toggle-row" for="AUTO_APPLY_EXTENSION_UPDATE">
                                 <input class="setting-switch-input" type="checkbox" value="AUTO_APPLY_EXTENSION_UPDATE" id="AUTO_APPLY_EXTENSION_UPDATE" v-model="selectedOpts"/>
                                 <span class="setting-switch" aria-hidden="true"></span>

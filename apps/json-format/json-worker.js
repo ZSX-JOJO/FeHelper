@@ -160,6 +160,7 @@ const JSONBigInt = {
 
 // 转义功能开启标记
 let escapeJsonStringEnabled = false;
+const LARGE_JSON_TEXT_THRESHOLD = 600000;
 
 // 处理主线程消息
 self.onmessage = function(event) {
@@ -203,9 +204,12 @@ self.onmessage = function(event) {
                 return;
             }
             
-            // 默认主题 - 创建更丰富的HTML结构
+            let formatted = safeStringify(jsonObj, 4);
+            // 默认主题 - 小 JSON 创建富 HTML 树；大 JSON 使用完整纯文本降级，避免卡顿/截断。
             let html = '<div id="formattedJson">' +
-                formatJsonToHtml(jsonObj) +
+                (formatted.length > LARGE_JSON_TEXT_THRESHOLD
+                    ? '<pre class="rootItem fh-large-json-plain">' + htmlspecialchars(formatted) + '</pre>'
+                    : formatJsonToHtml(jsonObj)) +
                 '</div>';
             
             self.postMessage(['FORMATTED', html]);

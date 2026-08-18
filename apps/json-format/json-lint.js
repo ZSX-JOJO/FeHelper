@@ -619,9 +619,38 @@ let jsonlint = (function () {
 let lintDetect = function (sJson) {
     let result = {};
 
+    let isInsideDoubleQuotedString = function (text, offset) {
+        let inString = false;
+        let escaped = false;
+        for (let i = 0; i < offset; i++) {
+            let char = text[i];
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (char === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (char === '"') {
+                inString = !inString;
+            }
+        }
+        return inString;
+    };
+
+    let quoteUnquotedKeysOutsideStrings = function (source) {
+        return source.replace(/([\s,{\[]+)([^,:\{\}\[\]\s'"]+)(\s*:)/gm, function ($0, $1, $2, $3, offset) {
+            if (isInsideDoubleQuotedString(source, offset)) {
+                return $0;
+            }
+            return $1 + '"' + $2 + '"' + $3;
+        });
+    };
+
     let insertErrorFlag = function (s) {
         s = s.replace(/^(\s*){([^\s])/, ($0, $1, $2) => ($1 + '{ ' + $2));
-        s = s.replace(/([\s,]+)([^,:\{\}\[\]\s'"]+)(\s*:)/gm, ($0, $1, $2, $3) => ($1 + '"' + $2 + '"' + $3));
+        s = quoteUnquotedKeysOutsideStrings(s);
         s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         let aLine = s.split('\n');
         jsonlint.yy.parseError = function (sError, oError) {

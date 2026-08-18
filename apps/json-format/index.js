@@ -3,6 +3,7 @@
  */
 
 import { buildRenderableTableViewData, canBuildTableViewData } from './table-utils.js';
+import { buildJsonSchema, getPreservedProperty, normalizePreservedKey, sanitizeJsonDownloadFilename } from './json-utils.js';
 import AI from '../aiagent/fh.ai.js';
 import {
     copyInlineAiResult,
@@ -719,6 +720,9 @@ new Vue({
             if (note !== this.windowNote) {
                 this.windowNote = note;
             }
+            if (typeof window !== 'undefined') {
+                window.__fhJsonWindowNote = note;
+            }
             if (note) {
                 this.safeSetSessionStorage(JSON_WINDOW_NOTE, note);
                 document.title = note + ' - JSON 格式化工具';
@@ -946,6 +950,48 @@ new Vue({
                     输出用途: task.title
                 }
             });
+        },
+
+        getJsonDownloadBasename: function(fallbackSeed) {
+            const fallback = fallbackSeed || ('FeHelper-' + (new Date()).format('yyyyMMddHHmmss'));
+            return sanitizeJsonDownloadFilename(this.windowNote, fallback);
+        },
+
+        generateOfflineJsonSchema: function() {
+            const input = this.jsonFormattedSource || (editor && typeof editor.getValue === 'function' ? editor.getValue() : '');
+            if (!input.trim() || !this.jsonActionReady) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '先粘贴并格式化一段合法 JSON。',
+                    result: '离线 Schema 需要稳定的 JSON 对象或数组作为样例。'
+                });
+                return;
+            }
+
+            try {
+                const jsonObj = parseWithBigInt(input);
+                const schema = buildJsonSchema(jsonObj);
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '本地确定性推断，不调用 AI。',
+                    result: [
+                        'required 仅包含当前样例中出现的对象字段；数组元素会合并样例中出现的类型。',
+                        '',
+                        '```json',
+                        this.safeStringify(schema, 2),
+                        '```'
+                    ].join('\n')
+                });
+            } catch (error) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '生成失败',
+                    result: '当前 JSON 未通过本地解析：' + (error && error.message ? error.message : '未知错误')
+                });
+            }
         },
 
         isInUSA: function () {
@@ -1373,8 +1419,9 @@ new Vue({
 
                 if (quotedPropMatch) {
                     let prop = quotedPropMatch[1];
-                    if (typeof current === 'object' && current !== null && current.hasOwnProperty(prop)) {
-                        this.evaluateJsonPath(current[prop], remainPath, currentPath + '[' + JSON.stringify(prop) + ']', results);
+                    let entry = getPreservedProperty(current, prop);
+                    if (entry.found) {
+                        this.evaluateJsonPath(entry.value, remainPath, currentPath + '[' + JSON.stringify(prop) + ']', results);
                     }
                     return;
                 }
@@ -1425,13 +1472,15 @@ new Vue({
                     // 通配符：所有属性
                     if (typeof current === 'object' && current !== null) {
                         Object.keys(current).forEach(key => {
-                            this.evaluateJsonPath(current[key], remainPath, currentPath + '.' + key, results);
+                            let displayKey = normalizePreservedKey(key);
+                            this.evaluateJsonPath(current[key], remainPath, currentPath + '.' + displayKey, results);
                         });
                     }
                 } else {
                     // 具体属性
-                    if (typeof current === 'object' && current !== null && current.hasOwnProperty(prop)) {
-                        this.evaluateJsonPath(current[prop], remainPath, currentPath + '.' + prop, results);
+                    let entry = getPreservedProperty(current, prop);
+                    if (entry.found) {
+                        this.evaluateJsonPath(entry.value, remainPath, currentPath + '.' + prop, results);
                     }
                 }
                 return;
@@ -1442,15 +1491,17 @@ new Vue({
                 let prop = match[1];
                 let remainPath = match[2];
                 
-                if (typeof current === 'object' && current !== null && current.hasOwnProperty(prop)) {
-                    this.evaluateJsonPath(current[prop], remainPath, currentPath + "['" + prop + "']", results);
+                let entry = getPreservedProperty(current, prop);
+                if (entry.found) {
+                    this.evaluateJsonPath(entry.value, remainPath, currentPath + "['" + prop + "']", results);
                 }
                 return;
             }
 
             // 如果没有特殊符号，当作属性名处理
-            if (typeof current === 'object' && current !== null && current.hasOwnProperty(path)) {
-                results.push({ path: currentPath + '.' + path, value: current[path] });
+            let finalEntry = getPreservedProperty(current, path);
+            if (finalEntry.found) {
+                results.push({ path: currentPath + '.' + path, value: finalEntry.value });
             }
         },
 
@@ -1458,18 +1509,20 @@ new Vue({
         recursiveSearch: function(current, targetProp, currentPath, results) {
             if (typeof current === 'object' && current !== null) {
                 // 检查当前对象的属性
-                if (current.hasOwnProperty(targetProp)) {
-                    results.push({ path: currentPath + '..' + targetProp, value: current[targetProp] });
+                let targetEntry = getPreservedProperty(current, targetProp);
+                if (targetEntry.found) {
+                    results.push({ path: currentPath + '..' + targetProp, value: targetEntry.value });
                 }
                 
                 // 递归搜索子对象
                 Object.keys(current).forEach(key => {
+                    let displayKey = normalizePreservedKey(key);
                     if (Array.isArray(current[key])) {
                         current[key].forEach((item, index) => {
-                            this.recursiveSearch(item, targetProp, currentPath + '.' + key + '[' + index + ']', results);
+                            this.recursiveSearch(item, targetProp, currentPath + '.' + displayKey + '[' + index + ']', results);
                         });
                     } else if (typeof current[key] === 'object' && current[key] !== null) {
-                        this.recursiveSearch(current[key], targetProp, currentPath + '.' + key, results);
+                        this.recursiveSearch(current[key], targetProp, currentPath + '.' + displayKey, results);
                     }
                 });
             }
@@ -1482,7 +1535,7 @@ new Vue({
             let match = filterExpr.match(/^\?\(@\.(\w+)\)$/);
             if (match) {
                 let prop = match[1];
-                return typeof item === 'object' && item !== null && item.hasOwnProperty(prop);
+                return getPreservedProperty(item, prop).found;
             }
             
             // 支持简单的比较 ?(@.age > 18)
@@ -1492,8 +1545,9 @@ new Vue({
                 let operator = match[2];
                 let value = match[3];
                 
-                if (typeof item === 'object' && item !== null && item.hasOwnProperty(prop)) {
-                    let itemValue = item[prop];
+                let entry = getPreservedProperty(item, prop);
+                if (entry.found) {
+                    let itemValue = entry.value;
                     let compareValue = isNaN(value) ? value.replace(/['"]/g, '') : parseFloat(value);
                     
                     switch (operator) {
@@ -1680,8 +1734,8 @@ new Vue({
         downloadJsonPathResults: function() {
             let resultText = this.buildJsonPathValuePayload();
             
-            // 基于JSONPath生成文件名
-            let filename = this.generateFilenameFromPath(this.jsonPathQuery);
+            // 优先使用窗口备注，空备注时再基于 JSONPath 生成文件名
+            let filename = this.getJsonDownloadBasename(this.generateFilenameFromPath(this.jsonPathQuery));
             
             let blob = new Blob([resultText], { type: 'application/json;charset=utf-8' });
             let url = window.URL.createObjectURL(blob);
