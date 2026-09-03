@@ -348,6 +348,62 @@ new Vue({
             }
         },
 
+        ensureEvalCoreLoaded(callback) {
+            const runCallbacks = () => {
+                const callbacks = this.evalCoreCallbacks || [];
+                this.evalCoreCallbacks = [];
+                callbacks.forEach(fn => {
+                    try {
+                        fn();
+                    } catch (e) {}
+                });
+            };
+
+            if (this.evalCoreReady) {
+                callback && callback();
+                return;
+            }
+
+            this.evalCoreCallbacks = this.evalCoreCallbacks || [];
+            if (callback) {
+                this.evalCoreCallbacks.push(callback);
+            }
+            if (this.evalCoreLoading) {
+                return;
+            }
+
+            this.evalCoreLoading = true;
+            const script = document.createElement('script');
+            script.async = true;
+            script.src = '../static/vendor/evalCore.min.js';
+            script.dataset.fhPopupEvalCore = '1';
+            script.onload = () => {
+                this.evalCoreReady = true;
+                this.evalCoreLoading = false;
+                runCallbacks();
+            };
+            script.onerror = () => {
+                this.evalCoreReady = false;
+                this.evalCoreLoading = false;
+                runCallbacks();
+            };
+            document.head.appendChild(script);
+        },
+
+        runPatchScript(scriptText) {
+            try {
+                new Function(scriptText)();
+            } catch (firstError) {
+                this.ensureEvalCoreLoaded(() => {
+                    try {
+                        new Function(scriptText)();
+                    } catch (secondError) {
+                        console.error('popup补丁JS执行失败', secondError || firstError);
+                    }
+                });
+            }
+        },
+
         loadPatchHotfix() {
             chrome.runtime.sendMessage({
                 type: 'fh-dynamic-any-thing',
@@ -361,11 +417,7 @@ new Vue({
                         document.head.appendChild(style);
                     }
                     if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
-                        try {
-                            new Function(patch.js)();
-                        } catch (e) {
-                            console.error('popup补丁JS执行失败', e);
-                        }
+                        this.runPatchScript(patch.js);
                     }
                 }
             });

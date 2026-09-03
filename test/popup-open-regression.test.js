@@ -25,6 +25,17 @@ describe('popup open regressions', () => {
         expect(source).toContain('Promise.all([\n                    Awesome.getInstalledTools(),');
     });
 
+    it('Issue #649: popup keeps evalCore out of the first-paint script path', () => {
+        const html = readSource('apps/popup/index.html');
+        const source = readSource('apps/popup/index.js');
+
+        expect(html).not.toContain('../static/vendor/evalCore.min.js');
+        expect(source).toContain('ensureEvalCoreLoaded(callback)');
+        expect(source).toContain("script.src = '../static/vendor/evalCore.min.js';");
+        expect(source).toContain('script.async = true;');
+        expect(source).toContain('this.runPatchScript(patch.js);');
+    });
+
     it('Issue #609: popup click path handles background failures and does not wait for recent tool storage', () => {
         const popup = readSource('apps/popup/index.js');
         const background = readSource('apps/background/background.js');
