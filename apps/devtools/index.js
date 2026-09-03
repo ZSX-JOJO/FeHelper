@@ -252,7 +252,7 @@ new Vue({
                     let files = result.jsCss;
 
                     // 获取所有网络文件的总个数，以便于计算进度
-                    let total = evalCore.getEvalInstance(window)(Object.values(files).map(a => a.length).join('+')) + 1;
+                    let total = Object.values(files).reduce((sum, arr) => sum + arr.length, 0) + 1;
                     let loaded = 1;
                     fnProgress && fnProgress(Math.floor(100 * loaded / total) + '%');
 
@@ -313,7 +313,7 @@ new Vue({
             let arrPromise = files.map(file => fetch(`${site}/${demoName}/${file}`).then(resp => resp.text()));
             return Promise.all(arrPromise).then(contents => {
                 // fh-config.js
-                let json = evalCore.getEvalInstance(window)(contents[0]);
+                let json = new Function('return ' + contents[0])();
                 this.addToolConfigs(json);
 
                 // index.html
@@ -367,6 +367,48 @@ new Vue({
             }
         },
 
+        normalizeZipEntryPath(fileName) {
+            return String(fileName || '')
+                .replace(/\\/g, '/')
+                .split(/[?#]/)[0]
+                .replace(/\/+/g, '/')
+                .replace(/^[\.\/]+/, '');
+        },
+
+        stripZipRootPath(fileName) {
+            const normalized = this.normalizeZipEntryPath(fileName);
+            const parts = normalized.split('/').filter(Boolean);
+            return parts.length > 1 ? parts.slice(1).join('/') : normalized;
+        },
+
+        normalizeImportedAssetRef(toolName, fileName) {
+            let normalized = this.normalizeZipEntryPath(fileName);
+            if (normalized.indexOf(toolName + '/') === 0) {
+                normalized = normalized.slice(toolName.length + 1);
+            }
+            return normalized;
+        },
+
+        resolveImportedZipAssetName(toolName, htmlAssetRef, zipEntryName) {
+            const assetRef = this.normalizeImportedAssetRef(toolName, htmlAssetRef);
+            const entryName = this.normalizeZipEntryPath(zipEntryName);
+            const entryWithoutRoot = this.stripZipRootPath(entryName);
+            const refBaseName = assetRef.split('/').pop();
+            const entryBaseName = entryName.split('/').pop();
+
+            if (
+                assetRef === entryName ||
+                assetRef === entryWithoutRoot ||
+                entryName.endsWith('/' + assetRef) ||
+                assetRef.endsWith('/' + entryWithoutRoot) ||
+                (refBaseName && refBaseName === entryBaseName)
+            ) {
+                return assetRef;
+            }
+
+            return '';
+        },
+
         loadTool(upgradeMode, upgradeToolName) {
             let Model = (function () {
                 zip.useWebWorkers = false;
@@ -402,40 +444,62 @@ new Vue({
                     let reg = /(fh-config\.js|index\.html|content-script\.(js|css))$/;
                     let entPart1 = entries.filter(en => reg.test(en.filename));
                     let entPart2 = entries.filter(en => !reg.test(en.filename));
+                    let configEntry = entPart1.find(en => /fh-config\.js$/.test(en.filename));
+                    let mainEntries = entPart1.filter(en => !/fh-config\.js$/.test(en.filename));
+                    let activeToolName = toolName;
 
-                    entPart1.forEach((entry) => {
-                        Model.getEntryFile(entry, (fileContent) => {
-                            let fileName = entry.filename.split('/').pop();
-                            try {
-                                if (fileName === `fh-config.js`) {
-                                    let json = JSON.parse(fileContent);
-                                    this.addToolConfigs(json);
-                                } else if (fileName === 'index.html') {
-                                    let result = this.htmlTplEncode(toolName, fileContent);
-                                    this.saveContentToLocal(toolName, fileName, result.html, true);
+                    let processMainEntries = () => {
+                        mainEntries.forEach((entry) => {
+                            Model.getEntryFile(entry, (fileContent) => {
+                                let fileName = entry.filename.split('/').pop();
+                                try {
+                                    if (fileName === 'index.html') {
+                                        let result = this.htmlTplEncode(activeToolName, fileContent);
+                                        this.saveContentToLocal(activeToolName, fileName, result.html, true);
 
-                                    // 所有被引用的静态文件都在这里进行遍历
-                                    entPart2.forEach(jcEntry => {
-                                        Model.getEntryFile(jcEntry, jcContent => {
-                                            Object.keys(result.jsCss).forEach(tp => {
-                                                result.jsCss[tp].some(file => {
-                                                    if (file[0].indexOf(jcEntry.filename) > -1) {
-                                                        this.saveContentToLocal(toolName, file[0].replace(`../${toolName}/`, ''), jcContent);
-                                                        return true;
-                                                    }
+                                        // 所有被引用的静态文件都在这里进行遍历
+                                        entPart2.forEach(jcEntry => {
+                                            Model.getEntryFile(jcEntry, jcContent => {
+                                                Object.keys(result.jsCss).forEach(tp => {
+                                                    result.jsCss[tp].some(file => {
+                                                        const importedName = this.resolveImportedZipAssetName(activeToolName, file[0], jcEntry.filename);
+                                                        if (importedName) {
+                                                            this.saveContentToLocal(activeToolName, importedName, jcContent);
+                                                            return true;
+                                                        }
+                                                    });
                                                 });
                                             });
                                         });
-                                    });
-                                } else if (['content-script.js', 'content-script.css'].includes(fileName)) {
-                                    this.saveContentToLocal(toolName, fileName, fileContent);
+                                    } else if (['content-script.js', 'content-script.css'].includes(fileName)) {
+                                        this.saveContentToLocal(activeToolName, fileName, fileContent);
+                                    }
+                                } catch (err) {
+                                    this.toast(`${fileName} 文件发生错误：${err.message}`);
+                                }
+                            });
+                        });
+                        this.toast('工具更新成功！');
+                    };
+
+                    if (configEntry) {
+                        Model.getEntryFile(configEntry, (fileContent) => {
+                            try {
+                                let json = JSON.parse(fileContent);
+                                this.addToolConfigs(json);
+                                let configToolNames = Object.keys(json);
+                                if (!upgradeMode && configToolNames.length === 1) {
+                                    activeToolName = configToolNames[0];
                                 }
                             } catch (err) {
-                                this.toast(`${fileName} 文件发生错误：${err.message}`);
+                                this.toast(`fh-config.js 文件发生错误：${err.message}`);
+                                return;
                             }
+                            processMainEntries();
                         });
-                    });
-                    this.toast('工具更新成功！');
+                    } else {
+                        processMainEntries();
+                    }
                 });
             }, false);
 
@@ -776,7 +840,7 @@ new Vue({
             document.body.removeChild(input);
         },
         fhDeveloperDoc() {
-            window.open(`https://github.com/zxlie/FeHelper/blob/master/README_NEW.md#%E5%85%ADopen-api`);
+            window.open('https://fehelper.com/docs.html?tool=devtools');
         }
     }
 });

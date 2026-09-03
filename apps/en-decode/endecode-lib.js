@@ -93,7 +93,7 @@ let EncodeUtils = (() => {
      */
     let _utf8Decode = function (str) {
         let out, i, len, c;
-        let char2, char3;
+        let char2, char3, char4, codePoint;
         out = "";
         len = str.length;
         i = 0;
@@ -124,6 +124,18 @@ let EncodeUtils = (() => {
                     out += String.fromCharCode(((c & 0x0F) << 12) |
                         ((char2 & 0x3F) << 6) |
                         ((char3 & 0x3F) << 0));
+                    break;
+                case 15:
+                    // 11110xxx 10xx xxxx 10xx xxxx 10xx xxxx
+                    char2 = str.charCodeAt(i++);
+                    char3 = str.charCodeAt(i++);
+                    char4 = str.charCodeAt(i++);
+                    codePoint = ((c & 0x07) << 18) |
+                        ((char2 & 0x3F) << 12) |
+                        ((char3 & 0x3F) << 6) |
+                        (char4 & 0x3F);
+                    codePoint -= 0x10000;
+                    out += String.fromCharCode(0xD800 + (codePoint >> 10), 0xDC00 + (codePoint & 0x3FF));
                     break;
             }
         }
@@ -166,24 +178,45 @@ let EncodeUtils = (() => {
         return out;
     };
 
+    let _tolerantUrlDecode = function(text, options) {
+        options = options || {};
+        let source = String(text == null ? '' : text);
+        if (options.plusAsSpace) {
+            source = source.replace(/\+/g, '%20');
+        }
+        try {
+            return decodeURIComponent(source);
+        } catch (e) {
+            return source.replace(/(?:%[0-9a-fA-F]{2})+/g, function(segment) {
+                try {
+                    return decodeURIComponent(segment);
+                } catch (err) {
+                    return segment.replace(/%([0-9a-fA-F]{2})/g, function(_, hex) {
+                        return String.fromCharCode(parseInt(hex, 16));
+                    });
+                }
+            });
+        }
+    };
+
+    let _normalizeBase64Input = function(str) {
+        let source = _tolerantUrlDecode(str).trim()
+            .replace(/^data:[^,]+,/, '')
+            .replace(/\s+/g, '')
+            .replace(/-/g, '+')
+            .replace(/_/g, '/');
+        let padLength = (4 - source.length % 4) % 4;
+        return source + '='.repeat(padLength);
+    };
+
     /**
      * 此方法用于将文字进行base64解码
      * @param {Object} str 源码
      * @return {String} 源码
      */
     let _base64Decode = function (str) {
-        // 首先进行URL解码处理，将%XX格式的字符转换回原始字符
-        try {
-            // 使用decodeURIComponent进行URL解码
-            str = decodeURIComponent(str);
-        } catch (e) {
-            // 如果decodeURIComponent失败，尝试手动替换常见的URL编码字符
-            str = str.replace(/%2B/g, '+')
-                    .replace(/%2F/g, '/')
-                    .replace(/%3D/g, '=')
-                    .replace(/%20/g, ' ');
-        }
-        
+        str = _normalizeBase64Input(str);
+
         let c1, c2, c3, c4;
         let i, len, out;
         len = str.length;
@@ -230,6 +263,19 @@ let EncodeUtils = (() => {
         }
 
         return out;
+    };
+
+    let _formatDecodedText = function(text) {
+        let value = String(text == null ? '' : text);
+        let trimmed = value.trim();
+        if (!trimmed || !/^[\{\[]/.test(trimmed)) {
+            return value;
+        }
+        try {
+            return JSON.stringify(JSON.parse(trimmed), null, 4);
+        } catch (e) {
+            return value;
+        }
     };
 
     /**
@@ -332,15 +378,168 @@ let EncodeUtils = (() => {
         };
 
 
-        let hexDecode = function (str) {
+        let normalizeHexInput = function (str) {
+            let normalized = String(str || '')
+                .replace(/0x/gi, '')
+                .replace(/[\s,;:_-]/g, '');
+            if (!normalized) return '';
+            if (/[^0-9a-f]/i.test(normalized)) {
+                throw new Error('请输入有效的十六进制字符串');
+            }
+            return normalized.length % 2 === 0 ? normalized : '0' + normalized;
+        };
+
+        let hexToBytes = function (str) {
+            str = normalizeHexInput(str);
             let buf = [];
             for (let i = 0; i < str.length; i += 2) {
                 buf.push(parseInt(str.substring(i, i + 2), 16));
             }
-            return utf8decode(buf);
+            return buf;
         };
 
-        return {hexEncode, hexDecode};
+        let bytesToHex = function (bytes) {
+            return bytes.map(item => ('0' + (item & 0xff).toString(16)).slice(-2)).join('');
+        };
+
+        let hexDecode = function (str) {
+            return utf8decode(hexToBytes(str));
+        };
+
+        let formatProtoInteger = function (value) {
+            return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
+        };
+
+        let readProtoVarint = function (bytes, offset) {
+            let result = 0n;
+            let shift = 0n;
+            let current = offset;
+            while (current < bytes.length) {
+                let byte = bytes[current++];
+                result |= BigInt(byte & 0x7f) << shift;
+                if ((byte & 0x80) === 0) {
+                    return { value: result, next: current };
+                }
+                shift += 7n;
+                if (shift > 70n) {
+                    throw new Error('Protobuf varint 过长或格式异常');
+                }
+            }
+            throw new Error('Protobuf varint 未完整结束');
+        };
+
+        let decodeUtf8Bytes = function (bytes) {
+            try {
+                let text = new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array(bytes));
+                if (!text || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) return '';
+                return text;
+            } catch (e) {
+                return '';
+            }
+        };
+
+        let readLittleEndianHex = function (bytes, offset, size) {
+            if (offset + size > bytes.length) {
+                throw new Error('Protobuf fixed 字段长度不足');
+            }
+            let valueBytes = bytes.slice(offset, offset + size);
+            return {
+                rawHex: bytesToHex(valueBytes),
+                littleEndianHex: bytesToHex(valueBytes.slice().reverse()),
+                next: offset + size
+            };
+        };
+
+        let parseProtoMessage = function (bytes, depth) {
+            let fields = [];
+            let offset = 0;
+
+            while (offset < bytes.length) {
+                let key = readProtoVarint(bytes, offset);
+                offset = key.next;
+                let fieldNumber = Number(key.value >> 3n);
+                let wireType = Number(key.value & 7n);
+                if (!fieldNumber) {
+                    throw new Error('Protobuf 字段号无效');
+                }
+
+                let field = {
+                    field: fieldNumber,
+                    wireType,
+                    offset: key.next - 1
+                };
+
+                if (wireType === 0) {
+                    let value = readProtoVarint(bytes, offset);
+                    offset = value.next;
+                    field.type = 'varint';
+                    field.value = formatProtoInteger(value.value);
+                } else if (wireType === 1) {
+                    let value = readLittleEndianHex(bytes, offset, 8);
+                    offset = value.next;
+                    field.type = 'fixed64';
+                    field.rawHex = value.rawHex;
+                    field.littleEndianHex = value.littleEndianHex;
+                } else if (wireType === 2) {
+                    let lengthInfo = readProtoVarint(bytes, offset);
+                    let length = Number(lengthInfo.value);
+                    offset = lengthInfo.next;
+                    if (!Number.isSafeInteger(length) || offset + length > bytes.length) {
+                        throw new Error('Protobuf length-delimited 字段长度异常');
+                    }
+                    let valueBytes = bytes.slice(offset, offset + length);
+                    offset += length;
+                    field.type = 'length-delimited';
+                    field.length = length;
+                    field.rawHex = bytesToHex(valueBytes);
+
+                    let text = decodeUtf8Bytes(valueBytes);
+                    if (text) {
+                        field.valueType = 'string';
+                        field.value = text;
+                    } else if (depth < 4 && valueBytes.length) {
+                        try {
+                            let nested = parseProtoMessage(valueBytes, depth + 1);
+                            field.valueType = 'message';
+                            field.value = nested;
+                        } catch (e) {
+                            field.valueType = 'bytes';
+                            field.value = field.rawHex;
+                        }
+                    } else {
+                        field.valueType = 'bytes';
+                        field.value = field.rawHex;
+                    }
+                } else if (wireType === 5) {
+                    let value = readLittleEndianHex(bytes, offset, 4);
+                    offset = value.next;
+                    field.type = 'fixed32';
+                    field.rawHex = value.rawHex;
+                    field.littleEndianHex = value.littleEndianHex;
+                } else {
+                    throw new Error('暂不支持的 protobuf wire type: ' + wireType);
+                }
+
+                fields.push(field);
+            }
+
+            return fields;
+        };
+
+        let protobufHexDecode = function (str) {
+            let bytes = hexToBytes(str);
+            if (!bytes.length) {
+                return '';
+            }
+            let result = {
+                format: 'protobuf-wire',
+                note: '未加载 .proto 描述时只能解析字段号、wire type 和原始值，无法还原字段名。',
+                fields: parseProtoMessage(bytes, 0)
+            };
+            return JSON.stringify(result, null, 4);
+        };
+
+        return {hexEncode, hexDecode, protobufHexDecode};
     })();
 
 
@@ -491,9 +690,9 @@ let EncodeUtils = (() => {
                 throw new InvalidTokenError("Invalid token specified: must be three parts");
             }
             
-            for(let part of parts){
-                if (typeof part !== "string") {
-                    throw new InvalidTokenError(`Invalid token specified: missing part #${pos + 1}`);
+            for(let i = 0; i < parts.length; i++){
+                if (typeof parts[i] !== "string" || parts[i].length === 0) {
+                    throw new InvalidTokenError(`Invalid token specified: missing part #${i + 1}`);
                 }        
             }
         
@@ -517,8 +716,8 @@ let EncodeUtils = (() => {
             const [key, value] = pair.trim().split('=');
             let obj = {},dk , vk ;
             try {
-                dk = decodeURIComponent(key);
-                vk = decodeURIComponent(value);
+                dk = _tolerantUrlDecode(key);
+                vk = _tolerantUrlDecode(value);
             } catch (error) {
                 dk = key;
                 vk = value;
@@ -605,13 +804,45 @@ let EncodeUtils = (() => {
             throw new Error('Gzip解压缩失败: ' + error.message);
         }
     };
-    
+
+    let _stringEscape = function(text) {
+        return text
+            .replace(/\\/g, '\\\\')
+            .replace(/\n/g, '\\n')
+            .replace(/\r/g, '\\r')
+            .replace(/\t/g, '\\t')
+            .replace(/\f/g, '\\f')
+            .replace(/"/g, '\\"')
+            .replace(/'/g, "\\'");
+    };
+
+    let _stringUnescape = function(text) {
+        return text.replace(/\\(n|r|t|f|\\|"|'|u[0-9a-fA-F]{4})/g, function(match, p1) {
+            switch(p1) {
+                case 'n': return '\n';
+                case 'r': return '\r';
+                case 't': return '\t';
+                case 'f': return '\f';
+                case '\\': return '\\';
+                case '"': return '"';
+                case "'": return "'";
+                default:
+                    if (p1.startsWith('u')) {
+                        return String.fromCharCode(parseInt(p1.substring(1), 16));
+                    }
+                    return match;
+            }
+        });
+    };
 
     return {
         uniEncode: _uniEncode,
         uniDecode: _uniDecode,
         base64Encode: _base64Encode,
         base64Decode: _base64Decode,
+        normalizeBase64Input: _normalizeBase64Input,
+        tolerantUrlDecode: _tolerantUrlDecode,
+        formatDecodedText: _formatDecodedText,
         utf8Encode: _utf8Encode,
         utf8Decode: _utf8Decode,
         utf16to8: _utf16to8,
@@ -619,13 +850,16 @@ let EncodeUtils = (() => {
         md5: md5,
         hexEncode: hexTools.hexEncode,
         hexDecode: hexTools.hexDecode,
+        protobufHexDecode: hexTools.protobufHexDecode,
         html2js: _html2js,
         urlParamsDecode: _urlParamsDecode,
         sha1Encode: _sha1Encode,
         jwtDecode,
         formatCookieStringToJson,
         gzipEncode: _gzipEncode,
-        gzipDecode: _gzipDecode
+        gzipDecode: _gzipDecode,
+        stringEscape: _stringEscape,
+        stringUnescape: _stringUnescape
     };
 })();
 

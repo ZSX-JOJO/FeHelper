@@ -2,20 +2,241 @@
  * FeHelper Json Format Tools
  */
 
+import { buildRenderableTableViewData, canBuildTableViewData } from './table-utils.js';
+import { buildJsonSchema, getPreservedProperty, normalizePreservedKey, sanitizeJsonDownloadFilename } from './json-utils.js';
+import AI from '../aiagent/fh.ai.js';
+import {
+    copyInlineAiResult,
+    createInlineAiState,
+    extractJsonCandidate,
+    getInlineAiTaskFromUrl,
+    renderInlineMarkdown,
+    resetInlineAiState,
+    runInlineToolAi,
+    setInlineAiGuide
+} from '../aiagent/fh.ai-inline.js';
+
 // 一些全局变量
 let editor = {};
 let LOCAL_KEY_OF_LAYOUT = 'local-layout-key';
 let JSON_LINT = 'jsonformat:json-lint-switch';
 let EDIT_ON_CLICK = 'jsonformat:edit-on-click';
 let AUTO_DECODE = 'jsonformat:auto-decode';
+let JSON_WINDOW_NOTE = 'jsonformat:window-note';
+let FH_UI_MODE = 'FH_UI_MODE';
+let JSON_FORMAT_UI_MODE = 'JSON_FORMAT_UI_MODE';
+
+const JSON_DERIVED_AI_TASKS = {
+    structure: {
+        taskKey: 'json-structure-health',
+        title: 'JSON 结构体检',
+        subtitle: '检查字段类型、nullable、数组一致性和潜在脏数据。',
+        instruction: [
+            '请对当前 JSON 做结构体检。',
+            '要求：1. 先给 3 条以内结论；2. 标出类型不稳定、nullable、数组元素结构不一致、疑似脏数据或字段命名问题；3. 给出可执行的 JSONPath/接口调试建议；4. 不生成代码，不解释 JSON 基础知识。'
+        ].join('\n'),
+        outputHint: '用“结论 / 风险字段 / 建议”三段输出。每段控制在 5 条以内。'
+    },
+    typescript: {
+        taskKey: 'json-typescript',
+        title: '生成 TypeScript 类型',
+        subtitle: '根据当前 JSON 样例推断可复制类型。',
+        instruction: [
+            '请根据当前 JSON 样例生成 TypeScript 类型定义。',
+            '要求：1. 根类型命名为 Root；2. 对数组、对象、null、数字和字符串做保守推断；3. 只基于样例出现的字段判断 required/optional，不虚构业务字段；4. 输出先给一句推断策略，再给一个 ```ts 代码块。'
+        ].join('\n'),
+        outputHint: '必须包含一个 ```ts 代码块。代码可直接复制到 TypeScript 项目中。'
+    },
+    schema: {
+        taskKey: 'json-schema',
+        title: '生成 JSON Schema',
+        subtitle: '根据当前 JSON 样例生成校验结构。',
+        instruction: [
+            '请根据当前 JSON 样例生成 JSON Schema。',
+            '要求：1. 使用 JSON Schema Draft 2020-12；2. 根 schema 适配当前样例的对象或数组结构；3. required 只包含样例中稳定出现的字段；4. null 值要用 type 数组或 anyOf 表达；5. 不要写业务上无法从样例确认的限制。'
+        ].join('\n'),
+        outputHint: '必须包含一个 ```json 代码块。先用一句话说明 required/nullable 的推断策略。'
+    },
+    zod: {
+        taskKey: 'json-zod',
+        title: '生成 Zod Schema',
+        subtitle: '根据当前 JSON 样例生成可复用校验代码。',
+        instruction: [
+            '请根据当前 JSON 样例生成 Zod Schema。',
+            '要求：1. 使用 import { z } from "zod"; 2. 根 schema 命名为 RootSchema；3. 导出 type Root = z.infer<typeof RootSchema>; 4. 对 null、数组和嵌套对象做保守推断；5. 不要补充样例里不存在的字段。'
+        ].join('\n'),
+        outputHint: '必须包含一个 ```ts 代码块。代码应该能直接复制到 TypeScript 项目中。'
+    }
+};
+
+const JSON_LOCAL_AI_RUNNABLE_STATUSES = new Set(['available', 'downloadable', 'downloading']);
+const JSON_AI_STATUS_TEXT = {
+    checking: '检测本地 AI',
+    unsupported: '本地 AI 不支持',
+    unavailable: '本地 AI 不可用',
+    downloadable: '模型待下载',
+    downloading: '模型下载中',
+    available: '本地 AI 就绪',
+    error: '状态检测失败'
+};
+
+function createJsonAiAvailabilityState() {
+    return {
+        supported: false,
+        availability: 'checking',
+        message: ''
+    };
+}
+
+function getJsonAiSourceSnapshot(value) {
+    const source = String(value || '');
+    let hash = 0;
+    for (let i = 0; i < source.length; i++) {
+        hash = ((hash << 5) - hash + source.charCodeAt(i)) | 0;
+    }
+    return `${source.length}:${hash}`;
+}
+
+function getJsonValueType(value) {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'array';
+    if (typeof value === 'bigint') return 'integer(bigint)';
+    return typeof value;
+}
+
+function formatJsonPathKey(key) {
+    return /^[A-Za-z_$][\w$]*$/.test(key)
+        ? `.${key}`
+        : `[${JSON.stringify(key)}]`;
+}
+
+function addLimited(list, value, limit = 18) {
+    if (value && list.length < limit && !list.includes(value)) {
+        list.push(value);
+    }
+}
+
+function collectJsonStructureStats(value, path, stats, depth = 0) {
+    stats.nodes += 1;
+    if (depth > 6) {
+        addLimited(stats.depthNotes, `${path}: 深度超过 6 层`);
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        stats.arrays += 1;
+        addLimited(stats.arrayNotes, `${path}: ${value.length} 项`);
+        const itemTypes = new Set(value.slice(0, 50).map(getJsonValueType));
+        if (itemTypes.size > 1) {
+            addLimited(stats.mixedArrays, `${path}: ${Array.from(itemTypes).join(' / ')}`);
+        }
+
+        const objectItems = value.slice(0, 50).filter(item => item && typeof item === 'object' && !Array.isArray(item));
+        if (objectItems.length > 1) {
+            const fieldMap = new Map();
+            objectItems.forEach(item => {
+                Object.keys(item).forEach(key => {
+                    if (!fieldMap.has(key)) {
+                        fieldMap.set(key, { count: 0, types: new Set() });
+                    }
+                    const field = fieldMap.get(key);
+                    field.count += 1;
+                    field.types.add(getJsonValueType(item[key]));
+                });
+            });
+            fieldMap.forEach((field, key) => {
+                const childPath = `${path}[*]${formatJsonPathKey(key)}`;
+                if (field.count < objectItems.length) {
+                    addLimited(stats.optionalFields, `${childPath}: ${field.count}/${objectItems.length} 项出现`);
+                }
+                if (field.types.size > 1) {
+                    addLimited(stats.typeConflicts, `${childPath}: ${Array.from(field.types).join(' / ')}`);
+                }
+                if (field.types.has('null')) {
+                    addLimited(stats.nullables, childPath);
+                }
+            });
+        }
+
+        value.slice(0, 20).forEach((item, index) => {
+            collectJsonStructureStats(item, `${path}[${index}]`, stats, depth + 1);
+        });
+        return;
+    }
+
+    if (value && typeof value === 'object') {
+        stats.objects += 1;
+        const keys = Object.keys(value);
+        addLimited(stats.objectNotes, `${path}: ${keys.length} 字段`);
+        keys.slice(0, 40).forEach(key => {
+            const childPath = `${path}${formatJsonPathKey(key)}`;
+            const childValue = value[key];
+            if (childValue === null) {
+                addLimited(stats.nullables, childPath);
+            }
+            collectJsonStructureStats(childValue, childPath, stats, depth + 1);
+        });
+    }
+}
+
+function buildJsonStructureSummary(source) {
+    try {
+        const jsonObj = parseWithBigInt(source);
+        const stats = {
+            rootType: getJsonValueType(jsonObj),
+            nodes: 0,
+            objects: 0,
+            arrays: 0,
+            objectNotes: [],
+            arrayNotes: [],
+            nullables: [],
+            optionalFields: [],
+            typeConflicts: [],
+            mixedArrays: [],
+            depthNotes: []
+        };
+        collectJsonStructureStats(jsonObj, '$', stats);
+        return [
+            `根类型: ${stats.rootType}`,
+            `扫描节点: ${stats.nodes}，对象: ${stats.objects}，数组: ${stats.arrays}`,
+            stats.objectNotes.length ? `对象结构: ${stats.objectNotes.join('；')}` : '',
+            stats.arrayNotes.length ? `数组结构: ${stats.arrayNotes.join('；')}` : '',
+            stats.nullables.length ? `nullable 字段: ${stats.nullables.join('；')}` : '',
+            stats.optionalFields.length ? `数组可选字段: ${stats.optionalFields.join('；')}` : '',
+            stats.typeConflicts.length ? `类型不稳定: ${stats.typeConflicts.join('；')}` : '',
+            stats.mixedArrays.length ? `混合数组: ${stats.mixedArrays.join('；')}` : '',
+            stats.depthNotes.length ? `深层结构: ${stats.depthNotes.join('；')}` : ''
+        ].filter(Boolean).join('\n');
+    } catch (error) {
+        return `本地结构摘要生成失败: ${error && error.message ? error.message : '未知错误'}`;
+    }
+}
+
+function isJsonDerivedAiTask(task) {
+    return Object.values(JSON_DERIVED_AI_TASKS).some(item => item.taskKey === task);
+}
+
+function syncJsonPageDarkMode(enabled) {
+    document.body.classList.toggle('theme-dark', !!enabled);
+    document.body.classList.toggle('theme-default', !enabled);
+    document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
+}
+
+function syncJsonPageUiMode(mode) {
+    const isLiteMode = mode !== 'omni';
+    document.body.classList.toggle('fh-ui-mode-lite', isLiteMode);
+    document.body.classList.toggle('fh-ui-mode-omni', !isLiteMode);
+}
 
 new Vue({
     el: '#pageContainer',
     data: {
-        defaultResultTpl: '<div class="x-placeholder"><img src="../json-format/json-demo.jpg" alt="json-placeholder"></div>',
+        defaultResultTpl: '<div class="x-placeholder"><div class="fh-empty-state"><div class="fh-empty-mark">JSON</div><strong>粘贴 JSON 后自动格式化</strong><p>支持 BigInt、JSONP、嵌套转义解析和 JSONPath 提取。</p></div></div>',
         placeHolder: '',
         jsonFormattedSource: '',
         errorMsg: '',
+        jsonActionReady: false,
+        tableViewReady: false,
         errorJsonCode: '',
         errorPos: '',
         jfCallbackName_start: '',
@@ -26,6 +247,13 @@ new Vue({
         overrideJson: false,
         isInUSAFlag: false,
         nestedEscapeParse: false,
+        nodeEditSnapshot: '',
+        nodeEditActive: false,
+        currentLayout: 'left-right',
+        uiMode: 'lite',
+        windowNote: '',
+        windowNoteEditorOpen: false,
+        sortType: '0',
         // JSONPath查询相关
         jsonPathQuery: '',
         showJsonPathModal: false,
@@ -33,12 +261,24 @@ new Vue({
         jsonPathResults: [],
         jsonPathError: '',
         copyButtonState: 'normal', // normal, copying, success, error
+        jsonPathCopyNotice: '',
+        jsonPathCopyNoticeTimer: null,
+        showTableViewModal: false,
+        tableViewError: '',
+        tableViewMode: 'grid',
+        tableViewTitle: '',
+        tableViewSourcePath: '',
+        tableViewColumns: [],
+        tableViewRows: [],
+        aiPanel: createInlineAiState(),
+        aiAvailability: createJsonAiAvailabilityState(),
+        aiAvailabilityChecking: false,
         jsonPathExamples: [
-            { path: '$', description: '根对象' },
-            { path: '$.data', description: '获取data属性' },
+            { path: '$', description: '根对象（类似 jq: .）' },
+            { path: '$.data', description: '获取data属性（类似 jq: .data）' },
             { path: '$.data.*', description: '获取data下的所有属性' },
             { path: '$.data[0]', description: '获取data数组的第一个元素' },
-            { path: '$.data[*]', description: '获取data数组的所有元素' },
+            { path: '$.data[*]', description: '获取data数组的所有元素（类似 jq: .data[]）' },
             { path: '$.data[?(@.name)]', description: '获取data数组中有name属性的元素' },
             { path: '$..name', description: '递归查找所有name属性' },
             { path: '$.data[0:3]', description: '获取data数组的前3个元素' },
@@ -47,10 +287,14 @@ new Vue({
         ]
     },
     mounted: function () {
-        // 自动开关灯控制
-        DarkModeMgr.turnLightAuto();
+        // JSON 工具有原生暗色主题，优先使用主题类，避免全局反色滤镜影响语法高亮。
+        if (window.DarkModeMgr && DarkModeMgr.watchAutoDarkMode) {
+            DarkModeMgr.watchAutoDarkMode(syncJsonPageDarkMode, {applyFilter: false});
+        } else if (window.chrome && chrome.runtime && window.DarkModeMgr) {
+            DarkModeMgr.turnLightAuto();
+        }
 
-        this.placeHolder = this.defaultResultTpl;
+        this.setResultPlaceholder(this.defaultResultTpl);
 
         // 安全获取localStorage值（在沙盒环境中可能不可用）
         this.autoDecode = this.safeGetLocalStorage(AUTO_DECODE) === 'true';
@@ -59,11 +303,13 @@ new Vue({
 
         this.jsonLintSwitch = (this.safeGetLocalStorage(JSON_LINT) !== 'false');
         this.overrideJson = (this.safeGetLocalStorage(EDIT_ON_CLICK) === 'true');
-        // 兼容旧的localStorage键名，优先使用新的键名
-        const oldAutoUnpack = this.safeGetLocalStorage('jsonformat:auto-unpack-json-string') === 'true';
-        const oldEscape = this.safeGetLocalStorage('jsonformat:escape-json-string') === 'true';
-        this.nestedEscapeParse = (this.safeGetLocalStorage('jsonformat:nested-escape-parse') === 'true') || oldAutoUnpack || oldEscape;
-        this.changeLayout(this.safeGetLocalStorage(LOCAL_KEY_OF_LAYOUT));
+        this.nestedEscapeParse = (this.safeGetLocalStorage('jsonformat:nested-escape-parse') === 'true');
+        this.currentLayout = this.normalizeLayout(this.safeGetLocalStorage(LOCAL_KEY_OF_LAYOUT));
+        this.windowNote = this.safeGetSessionStorage(JSON_WINDOW_NOTE) || '';
+        this.syncWindowNote();
+        this.changeLayout(this.currentLayout);
+        this.loadUiMode();
+        this.refreshJsonAiAvailability();
 
         editor = CodeMirror.fromTextArea(this.$refs.jsonBox, {
             mode: "text/javascript",
@@ -79,11 +325,10 @@ new Vue({
         // 格式化以后的JSON，点击以后可以重置原内容
         window._OnJsonItemClickByFH = (jsonTxt) => {
             if (this.overrideJson) {
-                this.disableEditorChange(jsonTxt);
+                this.enterNodeEdit(jsonTxt);
             }
         };
         editor.on('change', (editor, changes) => {
-            this.jsonFormattedSource = editor.getValue().replace(/\n/gm, ' ');
             this.fireChange && this.format();
         });
 
@@ -105,12 +350,274 @@ new Vue({
 
         // 页面加载时自动获取并注入json-format页面的补丁
         this.loadPatchHotfix();
+        this.handleInlineAiLaunch();
+        document.addEventListener('keydown', this.handleGlobalKeydown, true);
+        document.addEventListener('click', this.handleWindowNoteOutsideClick, true);
+    },
+    beforeDestroy: function () {
+        document.removeEventListener('keydown', this.handleGlobalKeydown, true);
+        document.removeEventListener('click', this.handleWindowNoteOutsideClick, true);
+        window.clearTimeout(this.jsonPathCopyNoticeTimer);
+    },
+    computed: {
+        aiPanelResultHtml() {
+            return renderInlineMarkdown(this.aiPanel.result);
+        },
+        jsonAiStatusText() {
+            const state = this.aiAvailability || createJsonAiAvailabilityState();
+            if (state.message && !JSON_LOCAL_AI_RUNNABLE_STATUSES.has(state.availability)) {
+                return state.message;
+            }
+            return JSON_AI_STATUS_TEXT[state.availability] || JSON_AI_STATUS_TEXT.checking;
+        },
+        canUseJsonLocalAi() {
+            const state = this.aiAvailability || createJsonAiAvailabilityState();
+            return JSON_LOCAL_AI_RUNNABLE_STATUSES.has(state.availability);
+        },
+        jsonAiControlDisabled() {
+            return !this.canUseJsonLocalAi || !!this.aiPanel.loading;
+        },
+        sortLabel() {
+            return {
+                '0': '默认',
+                '1': '升序',
+                '-1': '降序'
+            }[String(this.sortType)] || '默认';
+        }
     },
     methods: {
+        handleGlobalKeydown(event) {
+            if (!event || event.key !== 'Escape') {
+                return;
+            }
+
+            let handled = false;
+            if (this.windowNoteEditorOpen) {
+                this.closeWindowNoteEditor();
+                handled = true;
+            } else if (this.aiPanel && this.aiPanel.visible) {
+                this.closeAiPanel();
+                handled = true;
+            } else if (this.showJsonPathExamplesModal) {
+                this.closeJsonPathExamplesModal();
+                handled = true;
+            } else if (this.showTableViewModal) {
+                this.closeTableViewModal();
+                handled = true;
+            } else if (this.showJsonPathModal) {
+                this.closeJsonPathModal();
+                handled = true;
+            }
+
+            if (!handled) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation && event.stopImmediatePropagation();
+        },
+
+        async refreshJsonAiAvailability() {
+            if (this.aiAvailabilityChecking) {
+                return this.aiAvailability;
+            }
+            this.aiAvailabilityChecking = true;
+            this.aiAvailability = {
+                ...createJsonAiAvailabilityState(),
+                message: JSON_AI_STATUS_TEXT.checking
+            };
+            try {
+                const state = await AI.getBuiltInAvailability();
+                this.aiAvailability = {
+                    supported: !!(state && state.supported),
+                    availability: (state && state.availability) || 'error',
+                    message: (state && state.message) || ''
+                };
+                return this.aiAvailability;
+            } catch (error) {
+                this.aiAvailability = {
+                    supported: true,
+                    availability: 'error',
+                    message: error && error.message ? error.message : '检测 Chrome 内置 AI 状态失败。'
+                };
+                return this.aiAvailability;
+            } finally {
+                this.aiAvailabilityChecking = false;
+            }
+        },
+
+        async ensureJsonLocalAiReady(taskKey) {
+            const state = await this.refreshJsonAiAvailability();
+            if (JSON_LOCAL_AI_RUNNABLE_STATUSES.has(state.availability)) {
+                return true;
+            }
+            setInlineAiGuide(this.aiPanel, {
+                taskKey: taskKey || 'local-ai-unavailable',
+                title: '本地 AI 不可用',
+                subtitle: 'JSON AI 默认只使用 Chrome 内置 Gemini Nano。',
+                statusText: this.jsonAiStatusText,
+                result: [
+                    state.message || JSON_AI_STATUS_TEXT[state.availability] || JSON_AI_STATUS_TEXT.error,
+                    'FeHelper 不会在本地模型不可用时把 JSON 自动发送到云端。'
+                ].join('\n')
+            });
+            return false;
+        },
+
+        buildJsonAiRequestContext(input) {
+            return {
+                sourceSnapshot: getJsonAiSourceSnapshot(input),
+                structureSummary: buildJsonStructureSummary(input)
+            };
+        },
+
+        setResultPlaceholder(html) {
+            this.placeHolder = html || '';
+            const resultEl = document.querySelector('#jfContent');
+            if (resultEl) {
+                resultEl.innerHTML = this.placeHolder;
+            }
+        },
+
+        escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        },
+
+        buildErrorPlaceholder(message) {
+            const currentValue = editor && typeof editor.getValue === 'function' ? editor.getValue() : '';
+            const escapedMessage = this.escapeHtml(message);
+            const nestedHint = this.nestedEscapeParse
+                ? '<li>当前已开启“嵌套解析”，如果接口返回的是普通字符串，可先关闭后重试。</li>'
+                : '';
+            const rawHint = currentValue.trim()
+                ? '<li>原文已保留在左侧输入框，可按错误定位修正或使用 AI 修复。</li>'
+                : '';
+            return [
+                '<div class="fh-error-state">',
+                '  <div class="fh-error-badge">解析失败</div>',
+                '  <strong>当前内容没有稳定解析成可展示的 JSON 结构。</strong>',
+                `  <p class="fh-error-message">${escapedMessage}</p>`,
+                '  <ul class="fh-error-hints">',
+                '    <li>如果接口混入了前缀、注释或半截响应，先看原文最稳。</li>',
+                nestedHint,
+                rawHint,
+                '  </ul>',
+                '</div>'
+            ].join('');
+        },
+
+        setResultActionAvailability(enabled) {
+            if (typeof window !== 'undefined') {
+                window.__fhJsonResultActionsEnabled = !!enabled;
+            }
+            if (!enabled) {
+                this.clearOptionBar();
+            }
+        },
+
+        clearOptionBar() {
+            const optionBar = document.querySelector('#optionBar');
+            if (optionBar) {
+                optionBar.innerHTML = '';
+                optionBar.style.display = 'none';
+            }
+        },
+
+        resetResultActions() {
+            this.jsonActionReady = false;
+            this.tableViewReady = false;
+            this.setResultActionAvailability(false);
+            this.resetTableViewState();
+        },
+
+        resetTableViewState() {
+            this.showTableViewModal = false;
+            this.tableViewError = '';
+            this.tableViewTitle = '';
+            this.tableViewSourcePath = '';
+            this.tableViewColumns = [];
+            this.tableViewRows = [];
+            this.tableViewMode = 'grid';
+        },
+
+        syncResultActions(source) {
+            this.resetResultActions();
+            if (!source || this.errorMsg) {
+                return;
+            }
+            try {
+                const jsonObj = parseWithBigInt(source);
+                this.jsonActionReady = jsonObj !== null && typeof jsonObj === 'object';
+                this.tableViewReady = this.jsonActionReady && canBuildTableViewData(jsonObj);
+                this.setResultActionAvailability(this.jsonActionReady && !this.errorMsg);
+            } catch (_) {
+                this.resetResultActions();
+            }
+        },
+
+        loadUiMode() {
+            if (!window.chrome || !chrome.storage || !chrome.storage.local) {
+                syncJsonPageUiMode(this.uiMode);
+                return;
+            }
+            chrome.storage.local.get([JSON_FORMAT_UI_MODE, FH_UI_MODE], result => {
+                this.uiMode = String(result[JSON_FORMAT_UI_MODE] || result[FH_UI_MODE] || '').toLowerCase() === 'omni' ? 'omni' : 'lite';
+                syncJsonPageUiMode(this.uiMode);
+                this.$nextTick(() => {
+                    this.changeLayout(this.currentLayout);
+                });
+            });
+        },
+
+        setUiMode(mode) {
+            this.uiMode = mode === 'omni' ? 'omni' : 'lite';
+            syncJsonPageUiMode(this.uiMode);
+            this.$nextTick(() => {
+                this.changeLayout(this.currentLayout);
+            });
+            if (window.chrome && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.set({
+                    [JSON_FORMAT_UI_MODE]: this.uiMode
+                });
+            }
+        },
+
+        normalizeLayout(type) {
+            return type === 'up-down' ? 'up-down' : 'left-right';
+        },
+
+        setNestedEscapeParse(enabled) {
+            this.nestedEscapeParse = !!enabled;
+            this.safeSetLocalStorage('jsonformat:nested-escape-parse', this.nestedEscapeParse);
+            this.format();
+        },
+
+        retryWithoutNestedEscapeParse() {
+            if (!this.nestedEscapeParse) {
+                return;
+            }
+            this.setNestedEscapeParse(false);
+        },
+
         // 安全的JSON.stringify：
         // - 让 BigInt 在最终字符串中显示为未加引号的纯数字（用于显示与再解析）
         // - 普通 number 若为科学计数法，转为完整字符串（仍是数字）
+        // - BigNumberLike（json-bigint 对长小数的表示）转换为普通数字文本，避免输出 {s,e,c}
         safeStringify(obj, space) {
+            if (
+                typeof window !== 'undefined' &&
+                window.FHJsonAutoUtils &&
+                typeof window.FHJsonAutoUtils.safeStringify === 'function'
+            ) {
+                return window.FHJsonAutoUtils.safeStringify(obj, space);
+            }
+
             const tagged = JSON.stringify(obj, function(key, value) {
                 if (typeof value === 'bigint') {
                     // 用占位符标记，稍后去掉外层引号
@@ -120,12 +627,49 @@ new Vue({
                     // 转成完整字符串，再在末尾转换为数字文本（通过占位）
                     return `__FH_NUMSTR__${value.toLocaleString('fullwide', {useGrouping: false})}`;
                 }
+                if (value && typeof value === 'object' && typeof value.s === 'number' && typeof value.e === 'number' && Array.isArray(value.c)) {
+                    let numText = '';
+                    try {
+                        if (typeof value.toString === 'function' && value.toString !== Object.prototype.toString) {
+                            const result = value.toString();
+                            if (typeof result === 'string' && result !== '[object Object]') {
+                                numText = result;
+                            }
+                        }
+                    } catch (_) {}
+                    if (!numText) {
+                        const sign = value.s < 0 ? '-' : '';
+                        const CHUNK_SIZE = 14;
+                        let digits = '';
+                        for (let i = 0; i < value.c.length; i++) {
+                            let chunkStr = Math.abs(value.c[i]).toString();
+                            if (i > 0) chunkStr = chunkStr.padStart(CHUNK_SIZE, '0');
+                            digits += chunkStr;
+                        }
+                        digits = digits.replace(/^0+/, '') || '0';
+                        const decimalIndex = value.e + 1;
+                        if (decimalIndex <= 0) {
+                            const zeros = '0'.repeat(Math.abs(decimalIndex));
+                            let fraction = (zeros + digits).replace(/0+$/, '');
+                            numText = fraction ? (sign + '0.' + fraction) : (sign + '0');
+                        } else if (decimalIndex >= digits.length) {
+                            numText = sign + digits + '0'.repeat(decimalIndex - digits.length);
+                        } else {
+                            const intPart = digits.slice(0, decimalIndex);
+                            let fracPart = digits.slice(decimalIndex).replace(/0+$/, '');
+                            numText = fracPart ? (sign + intPart + '.' + fracPart) : (sign + intPart);
+                        }
+                    }
+                    return `__FH_BIGNUM__${numText}`;
+                }
                 return value;
             }, space);
             // 去掉占位符外层引号，恢复为裸数字文本
             return tagged
                 .replace(/"__FH_BIGINT__(-?\d+)"/g, '$1')
-                .replace(/"__FH_NUMSTR__(-?\d+)"/g, '$1');
+                .replace(/"__FH_NUMSTR__(-?\d+)"/g, '$1')
+                .replace(/"__FH_BIGNUM__(-?\d+(?:\.\d+)?)"/g, '$1')
+                .replace(/"__FH_PRESERVE_INTEGER_KEY__(\d+)":/g, '"$1":');
         },
         // 安全获取localStorage值（在沙盒环境中可能不可用）
         safeGetLocalStorage(key) {
@@ -146,7 +690,96 @@ new Vue({
             }
         },
 
+        safeGetSessionStorage(key) {
+            try {
+                return sessionStorage.getItem(key);
+            } catch (e) {
+                console.warn('sessionStorage不可用，使用默认值:', key);
+                return null;
+            }
+        },
+
+        safeSetSessionStorage(key, value) {
+            try {
+                sessionStorage.setItem(key, value);
+            } catch (e) {
+                console.warn('sessionStorage不可用，跳过保存:', key);
+            }
+        },
+
+        safeRemoveSessionStorage(key) {
+            try {
+                sessionStorage.removeItem(key);
+            } catch (e) {
+                console.warn('sessionStorage不可用，跳过删除:', key);
+            }
+        },
+
+        syncWindowNote() {
+            const note = String(this.windowNote || '').trim().slice(0, 48);
+            if (note !== this.windowNote) {
+                this.windowNote = note;
+            }
+            if (typeof window !== 'undefined') {
+                window.__fhJsonWindowNote = note;
+            }
+            if (note) {
+                this.safeSetSessionStorage(JSON_WINDOW_NOTE, note);
+                document.title = note + ' - JSON 格式化工具';
+            } else {
+                this.safeRemoveSessionStorage(JSON_WINDOW_NOTE);
+                document.title = 'JSON 格式化工具';
+            }
+        },
+
+        toggleWindowNoteEditor() {
+            this.windowNoteEditorOpen = !this.windowNoteEditorOpen;
+            if (this.windowNoteEditorOpen) {
+                this.$nextTick(() => {
+                    if (this.$refs.jsonWindowNote) {
+                        this.$refs.jsonWindowNote.focus();
+                        this.$refs.jsonWindowNote.select();
+                    }
+                });
+            }
+        },
+
+        closeWindowNoteEditor() {
+            this.windowNoteEditorOpen = false;
+        },
+
+        clearWindowNote() {
+            this.windowNote = '';
+            this.syncWindowNote();
+            this.$nextTick(() => {
+                if (this.$refs.jsonWindowNote) {
+                    this.$refs.jsonWindowNote.focus();
+                }
+            });
+        },
+
+        handleWindowNoteOutsideClick(event) {
+            if (!this.windowNoteEditorOpen) {
+                return;
+            }
+            const target = event && event.target;
+            const control = document.querySelector('.fh-window-note-control');
+            if (control && target && control.contains(target)) {
+                return;
+            }
+            this.closeWindowNoteEditor();
+        },
+
+        handleSortChange() {
+            this.$nextTick(() => {
+                this.format();
+            });
+        },
+
         loadPatchHotfix() {
+            if (!window.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+                return;
+            }
             // 页面加载时自动获取并注入页面的补丁
             chrome.runtime.sendMessage({
                 type: 'fh-dynamic-any-thing',
@@ -159,17 +792,206 @@ new Vue({
                         style.textContent = patch.css;
                         document.head.appendChild(style);
                     }
-                    if (patch.js) {
+                    if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
                         try {
-                            if (window.evalCore && window.evalCore.getEvalInstance) {
-                                window.evalCore.getEvalInstance(window)(patch.js);
-                            }
+                            new Function(patch.js)();
                         } catch (e) {
                             console.error('json-format补丁JS执行失败', e);
                         }
                     }
                 }
             });
+        },
+
+        getJsonResultText() {
+            if (this.errorMsg) {
+                return this.errorMsg;
+            }
+            const pre = document.querySelector('#jfContent_pre');
+            if (pre && pre.textContent.trim()) {
+                return pre.textContent.trim();
+            }
+            const content = document.querySelector('#jfContent');
+            return content ? content.textContent.trim() : '';
+        },
+
+        handleInlineAiLaunch() {
+            const task = getInlineAiTaskFromUrl();
+            if (!task) return;
+            if (task === 'json-structure' || JSON_DERIVED_AI_TASKS[task] || isJsonDerivedAiTask(task)) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: task,
+                    title: 'JSON 结构助手',
+                    subtitle: 'AI 只在 JSON 已成功解析后工作。',
+                    result: '粘贴 JSON 并完成格式化后，解析结果右上角会出现本地 AI 动作：结构体检、TS 类型、Schema、Zod。它们默认使用 Chrome 内置 Gemini Nano，不会静默发送到云端。'
+                });
+                return;
+            }
+            setInlineAiGuide(this.aiPanel, {
+                taskKey: task,
+                title: 'JSON AI 修复',
+                subtitle: 'AI 只在解析失败时介入，不替代格式化和校验。',
+                result: '粘贴 JSON 后点击“格式化”。如果解析失败，“解析结果”面板右上角会出现“AI 修复”，可以解释错误并生成可应用的合法 JSON。'
+            });
+        },
+
+        closeAiPanel() {
+            resetInlineAiState(this.aiPanel);
+        },
+
+        copyAiResult() {
+            copyInlineAiResult(this.aiPanel);
+        },
+
+        applyAiPanelResult() {
+            const fixedJson = extractJsonCandidate(this.aiPanel.result);
+            if (!fixedJson) {
+                this.aiPanel.statusText = '没有找到可应用的 JSON 代码块';
+                return;
+            }
+            const currentInput = editor && typeof editor.getValue === 'function' ? editor.getValue() : '';
+            const currentSnapshot = getJsonAiSourceSnapshot(currentInput);
+            if (this.aiPanel.sourceSnapshot && this.aiPanel.sourceSnapshot !== currentSnapshot) {
+                this.aiPanel.statusText = '输入已变化，请重新生成后再应用';
+                return;
+            }
+            try {
+                const jsonObj = parseWithBigInt(fixedJson);
+                if (jsonObj === null || typeof jsonObj !== 'object') {
+                    this.aiPanel.statusText = 'AI 返回的 JSON 不是对象或数组，未应用';
+                    return;
+                }
+            } catch (error) {
+                this.aiPanel.statusText = `AI 返回的 JSON 未通过本地解析校验：${error.message}`;
+                return;
+            }
+            editor.setValue(fixedJson);
+            this.format();
+            this.aiPanel.statusText = '已写回输入框并重新格式化';
+        },
+
+        async askAiForJsonRepair() {
+            const input = editor && typeof editor.getValue === 'function' ? editor.getValue() : '';
+            if (!input.trim()) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'repair-json',
+                    title: 'JSON AI 修复',
+                    subtitle: '先粘贴解析失败的 JSON。',
+                    result: '这里不会做泛泛分析。请先粘贴 JSON 并点击格式化，出现解析错误后再让 AI 解释和修复。'
+                });
+                return;
+            }
+            if (!(await this.ensureJsonLocalAiReady('repair-json'))) {
+                return;
+            }
+            const aiContext = this.buildJsonAiRequestContext(input);
+            runInlineToolAi(this.aiPanel, {
+                toolKey: 'json-format',
+                taskKey: 'repair-json',
+                title: '解释并修复 JSON 错误',
+                subtitle: '根据当前解析错误生成可应用修正版。',
+                instruction: '请只围绕当前 JSON 解析错误回答：1. 错误原因；2. 可疑位置；3. 一个合法 JSON 修正版。修正版必须放在 ```json 代码块中。不要解释 JSON 基础知识，不要补充原始 JSON 中不存在的业务字段。',
+                inputLabel: '当前 JSON 输入',
+                input,
+                resultLabel: this.errorMsg ? '当前解析错误' : '当前格式化结果',
+                result: this.getJsonResultText(),
+                outputHint: '先用一两句话定位错误，再给 ```json 代码块。不要输出无关教程。',
+                canApply: true,
+                applyLabel: '应用修正版',
+                provider: 'builtin',
+                sourceSnapshot: aiContext.sourceSnapshot,
+                meta: {
+                    AI模式: 'Chrome 内置 Gemini Nano，本地执行',
+                    JSONLint: this.jsonLintSwitch ? '开启' : '关闭',
+                    自动解码: this.autoDecode ? '开启' : '关闭',
+                    节点编辑: this.overrideJson ? '开启' : '关闭',
+                    嵌套解析: this.nestedEscapeParse ? '开启' : '关闭'
+                }
+            });
+        },
+
+        async askAiForJsonDerivedOutput(kind) {
+            const task = JSON_DERIVED_AI_TASKS[kind];
+            if (!task) return;
+
+            const input = this.jsonFormattedSource || (editor && typeof editor.getValue === 'function' ? editor.getValue() : '');
+            if (!input.trim() || !this.jsonActionReady) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: task.taskKey,
+                    title: task.title,
+                    subtitle: '先粘贴并格式化一段合法 JSON。',
+                    result: '这类 AI 任务需要稳定的 JSON 结构作为上下文。请先粘贴 JSON 并完成格式化，再生成类型、Schema 或 Zod。'
+                });
+                return;
+            }
+            if (!(await this.ensureJsonLocalAiReady(task.taskKey))) {
+                return;
+            }
+            const aiContext = this.buildJsonAiRequestContext(input);
+
+            runInlineToolAi(this.aiPanel, {
+                toolKey: 'json-format',
+                taskKey: task.taskKey,
+                title: task.title,
+                subtitle: task.subtitle,
+                instruction: task.instruction,
+                inputLabel: '当前格式化 JSON',
+                input,
+                resultLabel: '本地结构摘要',
+                result: aiContext.structureSummary,
+                outputHint: task.outputHint,
+                provider: 'builtin',
+                sourceSnapshot: aiContext.sourceSnapshot,
+                meta: {
+                    AI模式: 'Chrome 内置 Gemini Nano，本地执行',
+                    JSONLint: this.jsonLintSwitch ? '开启' : '关闭',
+                    自动解码: this.autoDecode ? '开启' : '关闭',
+                    嵌套解析: this.nestedEscapeParse ? '开启' : '关闭',
+                    输出用途: task.title
+                }
+            });
+        },
+
+        getJsonDownloadBasename: function(fallbackSeed) {
+            const fallback = fallbackSeed || ('FeHelper-' + (new Date()).format('yyyyMMddHHmmss'));
+            return sanitizeJsonDownloadFilename(this.windowNote, fallback);
+        },
+
+        generateOfflineJsonSchema: function() {
+            const input = this.jsonFormattedSource || (editor && typeof editor.getValue === 'function' ? editor.getValue() : '');
+            if (!input.trim() || !this.jsonActionReady) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '先粘贴并格式化一段合法 JSON。',
+                    result: '离线 Schema 需要稳定的 JSON 对象或数组作为样例。'
+                });
+                return;
+            }
+
+            try {
+                const jsonObj = parseWithBigInt(input);
+                const schema = buildJsonSchema(jsonObj);
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '本地确定性推断，不调用 AI。',
+                    result: [
+                        'required 仅包含当前样例中出现的对象字段；数组元素会合并样例中出现的类型。',
+                        '',
+                        '```json',
+                        this.safeStringify(schema, 2),
+                        '```'
+                    ].join('\n')
+                });
+            } catch (error) {
+                setInlineAiGuide(this.aiPanel, {
+                    taskKey: 'json-schema-offline',
+                    title: '离线 JSON Schema',
+                    subtitle: '生成失败',
+                    result: '当前 JSON 未通过本地解析：' + (error && error.message ? error.message : '未知错误')
+                });
+            }
         },
 
         isInUSA: function () {
@@ -187,7 +1009,9 @@ new Vue({
 
         format: function () {
             this.errorMsg = '';
-            this.placeHolder = this.defaultResultTpl;
+            this.jsonFormattedSource = '';
+            this.resetResultActions();
+            this.setResultPlaceholder(this.defaultResultTpl);
             this.jfCallbackName_start = '';
             this.jfCallbackName_end = '';
 
@@ -225,10 +1049,25 @@ new Vue({
                                 jsonObj = new Function("return " + jsonObj)();
                             }
                         }
-                    } catch (exxx) {
+                } catch (exxx) {
                         this.errorMsg = exxx.message;
+                        // 常见场景：Windows 路径等包含未转义反斜杠，JSON.parse 会报 Invalid escape / Unexpected token
+                        try {
+                            const msg = String(this.errorMsg || '');
+                            if (
+                                (msg.includes('Invalid escape') || msg.includes('Unexpected token') || msg.includes('Bad escaped character')) &&
+                                source.includes('\\')
+                            ) {
+                                this.errorMsg +=
+                                    '（提示：JSON 字符串中的反斜杠需要写成 \\\\。例如 Windows 路径应写为 "C:\\\\a\\\\b"；请贴出可复制的原始 JSON 文本以便确认）';
+                            }
+                        } catch (_) {}
                     }
                 }
+            }
+
+            if (!this.errorMsg.length && this.nestedEscapeParse && typeof jsonObj === 'string') {
+                jsonObj = unpackTopLevelEscapedJSON(jsonObj);
             }
 
             // 是json格式，可以进行JSON自动格式化
@@ -239,7 +1078,8 @@ new Vue({
                         jsonObj = deepParseJSONStrings(jsonObj);
                     }
                     
-                    let sortType = document.querySelectorAll('[name=jsonsort]:checked')[0].value;
+                    const selectedSortInput = document.querySelector('[name="jsonsort"]:checked');
+                    const sortType = String(this.sortType || (selectedSortInput ? selectedSortInput.value : '0'));
                     if (sortType !== '0') {
                         jsonObj = JsonABC.sortObj(jsonObj, parseInt(sortType), true);
                     }
@@ -271,6 +1111,7 @@ new Vue({
 
                     this.placeHolder = '';
                     this.jsonFormattedSource = source;
+                    this.syncResultActions(source);
 
                     // 如果是JSONP格式的，需要把方法名也显示出来
                     if (funcName != null) {
@@ -291,7 +1132,7 @@ new Vue({
                 if (this.jsonLintSwitch) {
                     return this.lintOn();
                 } else {
-                    this.placeHolder = '<span class="x-error">' + this.errorMsg + '</span>';
+                    this.setResultPlaceholder(this.buildErrorPlaceholder(this.errorMsg));
                     return false;
                 }
             }
@@ -328,33 +1169,66 @@ new Vue({
         updateWrapperHeight: function () {
             let curLayout = this.safeGetLocalStorage(LOCAL_KEY_OF_LAYOUT);
             let elPc = document.querySelector('#pageContainer');
+            if (!elPc) {
+                return;
+            }
             if (curLayout === 'up-down') {
                 elPc.style.height = 'auto';
             } else {
-                elPc.style.height = Math.max(elPc.scrollHeight, document.body.scrollHeight) + 'px';
+                elPc.style.height = '100dvh';
             }
         },
 
         changeLayout: function (type) {
             let elPc = document.querySelector('#pageContainer');
+            type = this.normalizeLayout(type);
+            this.currentLayout = type;
+            if (!elPc) {
+                return;
+            }
             if (type === 'up-down') {
                 elPc.classList.remove('layout-left-right');
                 elPc.classList.add('layout-up-down');
-                this.$refs.btnLeftRight.classList.remove('selected');
-                this.$refs.btnUpDown.classList.add('selected');
             } else {
                 elPc.classList.remove('layout-up-down');
                 elPc.classList.add('layout-left-right');
-                this.$refs.btnLeftRight.classList.add('selected');
-                this.$refs.btnUpDown.classList.remove('selected');
             }
             this.safeSetLocalStorage(LOCAL_KEY_OF_LAYOUT, type);
             this.updateWrapperHeight();
+            this.$nextTick(() => {
+                if (editor && typeof editor.refresh === 'function') {
+                    editor.refresh();
+                }
+            });
         },
 
         setCache: function () {
             this.$nextTick(() => {
                 this.safeSetLocalStorage(EDIT_ON_CLICK, this.overrideJson);
+            });
+        },
+
+        enterNodeEdit: function (jsonTxt) {
+            const currentValue = editor && typeof editor.getValue === 'function' ? editor.getValue() : '';
+            if (!this.nodeEditActive) {
+                this.nodeEditSnapshot = currentValue;
+            }
+            this.nodeEditActive = true;
+            this.disableEditorChange(jsonTxt);
+        },
+
+        restoreNodeEditSource: function () {
+            if (!this.nodeEditActive || !this.nodeEditSnapshot) {
+                return;
+            }
+            const source = this.nodeEditSnapshot;
+            this.nodeEditActive = false;
+            this.nodeEditSnapshot = '';
+            this.disableEditorChange(source);
+            this.$nextTick(() => {
+                this.$nextTick(() => {
+                    this.format();
+                });
             });
         },
 
@@ -369,11 +1243,27 @@ new Vue({
                 if (!this.jsonLintSwitch) {
                     return;
                 }
-                let lintResult = JsonLint.lintDetect(editor.getValue());
+                const raw = editor.getValue();
+                let lintResult = JsonLint.lintDetect(raw);
                 if (!isNaN(lintResult.line)) {
-                    this.placeHolder = '<div id="errorTips">' +
+                    let backslashHint = '';
+                    try {
+                        const lines = String(raw).split(/\r?\n/);
+                        const lineText = lines[lintResult.line] || '';
+                        const ch = lineText[lintResult.col] || '';
+                        if (String(raw).includes('\\') && (ch === '\\' || lineText.includes('\\'))) {
+                            backslashHint =
+                                '<div style="margin-top:8px;color:#b94a48;">' +
+                                '提示：JSON 字符串中的反斜杠需要写成 <code>\\\\</code>。例如 Windows 路径应写为：<code>\"C:\\\\a\\\\b\"</code>' +
+                                '</div>';
+                        }
+                    } catch (_) {}
+                    this.setResultPlaceholder('<div id="errorTips">' +
                         '<div id="tipsBox">错误位置：' + (lintResult.line + 1) + '行，' + (lintResult.col + 1) + '列；缺少字符或字符不正确</div>' +
-                        '<div id="errorCode">' + lintResult.dom + '</div></div>';
+                        backslashHint +
+                        '<div id="errorCode">' + lintResult.dom + '</div></div>');
+                } else if (this.errorMsg) {
+                    this.setResultPlaceholder(this.buildErrorPlaceholder(this.errorMsg));
                 }
             });
             return false;
@@ -415,15 +1305,45 @@ new Vue({
 
         nestedEscapeParseFn: function () {
             this.$nextTick(() => {
-                this.safeSetLocalStorage('jsonformat:nested-escape-parse', this.nestedEscapeParse);
-                this.format();
+                this.setNestedEscapeParse(this.nestedEscapeParse);
             });
+        },
+
+        openTableViewModal: function() {
+            if (!this.tableViewReady) {
+                return;
+            }
+            this.resetTableViewState();
+
+            let source = this.jsonFormattedSource;
+            if (!source.trim()) {
+                return;
+            }
+
+            try {
+                const jsonObj = parseWithBigInt(source);
+                const tableViewData = buildRenderableTableViewData(jsonObj);
+                this.tableViewMode = tableViewData.mode;
+                this.tableViewTitle = tableViewData.title;
+                this.tableViewSourcePath = tableViewData.sourcePath;
+                this.tableViewRows = tableViewData.rows;
+                this.tableViewColumns = tableViewData.columns || [];
+                this.showTableViewModal = true;
+            } catch (error) {
+                this.tableViewError = error.message || '表格视图生成失败';
+                this.showTableViewModal = true;
+            }
+        },
+
+        closeTableViewModal: function() {
+            this.showTableViewModal = false;
         },
 
         // JSONPath查询功能
         executeJsonPath: function() {
             this.jsonPathError = '';
             this.jsonPathResults = [];
+            this.jsonPathCopyNotice = '';
 
             if (!this.jsonPathQuery.trim()) {
                 this.jsonPathError = '请输入JSONPath查询表达式';
@@ -437,7 +1357,7 @@ new Vue({
             }
 
             try {
-                let jsonObj = JSON.parse(source);
+                let jsonObj = parseWithBigInt(source);
                 this.jsonPathResults = this.queryJsonPath(jsonObj, this.jsonPathQuery.trim());
                 this.showJsonPathModal = true;
             } catch (error) {
@@ -495,6 +1415,16 @@ new Vue({
             if ((match = path.match(/^\[([^\]]+)\](.*)$/))) {
                 let indexExpr = match[1];
                 let remainPath = match[2];
+                let quotedPropMatch = indexExpr.match(/^['"](.+)['"]$/);
+
+                if (quotedPropMatch) {
+                    let prop = quotedPropMatch[1];
+                    let entry = getPreservedProperty(current, prop);
+                    if (entry.found) {
+                        this.evaluateJsonPath(entry.value, remainPath, currentPath + '[' + JSON.stringify(prop) + ']', results);
+                    }
+                    return;
+                }
                 
                 if (!Array.isArray(current)) {
                     return;
@@ -542,13 +1472,15 @@ new Vue({
                     // 通配符：所有属性
                     if (typeof current === 'object' && current !== null) {
                         Object.keys(current).forEach(key => {
-                            this.evaluateJsonPath(current[key], remainPath, currentPath + '.' + key, results);
+                            let displayKey = normalizePreservedKey(key);
+                            this.evaluateJsonPath(current[key], remainPath, currentPath + '.' + displayKey, results);
                         });
                     }
                 } else {
                     // 具体属性
-                    if (typeof current === 'object' && current !== null && current.hasOwnProperty(prop)) {
-                        this.evaluateJsonPath(current[prop], remainPath, currentPath + '.' + prop, results);
+                    let entry = getPreservedProperty(current, prop);
+                    if (entry.found) {
+                        this.evaluateJsonPath(entry.value, remainPath, currentPath + '.' + prop, results);
                     }
                 }
                 return;
@@ -559,15 +1491,17 @@ new Vue({
                 let prop = match[1];
                 let remainPath = match[2];
                 
-                if (typeof current === 'object' && current !== null && current.hasOwnProperty(prop)) {
-                    this.evaluateJsonPath(current[prop], remainPath, currentPath + "['" + prop + "']", results);
+                let entry = getPreservedProperty(current, prop);
+                if (entry.found) {
+                    this.evaluateJsonPath(entry.value, remainPath, currentPath + "['" + prop + "']", results);
                 }
                 return;
             }
 
             // 如果没有特殊符号，当作属性名处理
-            if (typeof current === 'object' && current !== null && current.hasOwnProperty(path)) {
-                results.push({ path: currentPath + '.' + path, value: current[path] });
+            let finalEntry = getPreservedProperty(current, path);
+            if (finalEntry.found) {
+                results.push({ path: currentPath + '.' + path, value: finalEntry.value });
             }
         },
 
@@ -575,18 +1509,20 @@ new Vue({
         recursiveSearch: function(current, targetProp, currentPath, results) {
             if (typeof current === 'object' && current !== null) {
                 // 检查当前对象的属性
-                if (current.hasOwnProperty(targetProp)) {
-                    results.push({ path: currentPath + '..' + targetProp, value: current[targetProp] });
+                let targetEntry = getPreservedProperty(current, targetProp);
+                if (targetEntry.found) {
+                    results.push({ path: currentPath + '..' + targetProp, value: targetEntry.value });
                 }
                 
                 // 递归搜索子对象
                 Object.keys(current).forEach(key => {
+                    let displayKey = normalizePreservedKey(key);
                     if (Array.isArray(current[key])) {
                         current[key].forEach((item, index) => {
-                            this.recursiveSearch(item, targetProp, currentPath + '.' + key + '[' + index + ']', results);
+                            this.recursiveSearch(item, targetProp, currentPath + '.' + displayKey + '[' + index + ']', results);
                         });
                     } else if (typeof current[key] === 'object' && current[key] !== null) {
-                        this.recursiveSearch(current[key], targetProp, currentPath + '.' + key, results);
+                        this.recursiveSearch(current[key], targetProp, currentPath + '.' + displayKey, results);
                     }
                 });
             }
@@ -599,7 +1535,7 @@ new Vue({
             let match = filterExpr.match(/^\?\(@\.(\w+)\)$/);
             if (match) {
                 let prop = match[1];
-                return typeof item === 'object' && item !== null && item.hasOwnProperty(prop);
+                return getPreservedProperty(item, prop).found;
             }
             
             // 支持简单的比较 ?(@.age > 18)
@@ -609,8 +1545,9 @@ new Vue({
                 let operator = match[2];
                 let value = match[3];
                 
-                if (typeof item === 'object' && item !== null && item.hasOwnProperty(prop)) {
-                    let itemValue = item[prop];
+                let entry = getPreservedProperty(item, prop);
+                if (entry.found) {
+                    let itemValue = entry.value;
                     let compareValue = isNaN(value) ? value.replace(/['"]/g, '') : parseFloat(value);
                     
                     switch (operator) {
@@ -640,17 +1577,22 @@ new Vue({
 
         // 打开JSONPath查询模态框
         openJsonPathModal: function() {
+            if (!this.jsonActionReady) {
+                return;
+            }
             this.showJsonPathModal = true;
             // 清空之前的查询结果
             this.jsonPathResults = [];
             this.jsonPathError = '';
             this.copyButtonState = 'normal';
+            this.jsonPathCopyNotice = '';
         },
 
         // 关闭JSONPath结果模态框
         closeJsonPathModal: function() {
             this.showJsonPathModal = false;
             this.copyButtonState = 'normal'; // 重置复制按钮状态
+            this.jsonPathCopyNotice = '';
         },
 
         // 关闭JSONPath示例模态框
@@ -660,62 +1602,146 @@ new Vue({
 
         // 格式化JSONPath查询结果
         formatJsonPathResult: function(value) {
-            if (typeof value === 'object') {
-                return JSON.stringify(value, null, 2);
-            }
-            return String(value);
+            return this.serializeJsonPathValue(value);
         },
 
-        // 复制JSONPath查询结果
-        copyJsonPathResults: function() {
-            let resultText = this.jsonPathResults.map(result => {
-                return `路径: ${result.path}\n值: ${this.formatJsonPathResult(result.value)}`;
-            }).join('\n\n');
-            
-            // 设置复制状态
-            this.copyButtonState = 'copying';
-            
-            navigator.clipboard.writeText(resultText).then(() => {
-                this.copyButtonState = 'success';
-                setTimeout(() => {
-                    this.copyButtonState = 'normal';
-                }, 2000);
-            }).catch(() => {
-                // 兼容旧浏览器
+        serializeJsonPathValue: function(value) {
+            let output = this.safeStringify(value, 2);
+            return output === undefined ? String(value) : output;
+        },
+
+        buildJsonPathValuePayload: function() {
+            let values = this.jsonPathResults.map(result => result.value);
+            let payload = values.length === 1 ? values[0] : values;
+            return this.serializeJsonPathValue(payload);
+        },
+
+        buildJsonPathDetailsPayload: function() {
+            return this.safeStringify(this.jsonPathResults.map((result, index) => ({
+                index: index + 1,
+                path: result.path,
+                type: this.getJsonPathResultType(result.value),
+                value: result.value
+            })), 2);
+        },
+
+        buildJsonPathPathsPayload: function() {
+            return this.jsonPathResults.map(result => result.path).join('\n');
+        },
+
+        getJsonPathResultType: function(value) {
+            if (value === null) return 'null';
+            if (Array.isArray(value)) return 'array';
+            if (typeof value === 'bigint') return 'bigint';
+            return typeof value;
+        },
+
+        getJsonPathResultPreview: function(value) {
+            let output = this.serializeJsonPathValue(value);
+            return output.length > 600 ? output.slice(0, 600) + '\n...' : output;
+        },
+
+        copyTextToClipboard: function(text) {
+            let payload = String(text === undefined || text === null ? '' : text);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(payload).catch(() => this.copyTextFallback(payload));
+            }
+            return this.copyTextFallback(payload);
+        },
+
+        copyTextFallback: function(text) {
+            return new Promise((resolve, reject) => {
+                let textArea = null;
                 try {
-                    let textArea = document.createElement('textarea');
-                    textArea.value = resultText;
+                    textArea = document.createElement('textarea');
+                    textArea.value = text;
+                    textArea.setAttribute('readonly', 'readonly');
+                    textArea.style.position = 'fixed';
+                    textArea.style.left = '-9999px';
                     document.body.appendChild(textArea);
                     textArea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(textArea);
-                    this.copyButtonState = 'success';
-                    setTimeout(() => {
-                        this.copyButtonState = 'normal';
-                    }, 2000);
+                    if (document.execCommand('copy') === false) {
+                        throw new Error('copy command failed');
+                    }
+                    resolve();
                 } catch (error) {
-                    this.copyButtonState = 'error';
-                    setTimeout(() => {
-                        this.copyButtonState = 'normal';
-                    }, 2000);
+                    reject(error);
+                } finally {
+                    if (textArea && textArea.parentNode) {
+                        textArea.parentNode.removeChild(textArea);
+                    }
                 }
             });
         },
 
-        // 下载JSONPath查询结果
+        showJsonPathCopyNotice: function(message) {
+            window.clearTimeout(this.jsonPathCopyNoticeTimer);
+            this.jsonPathCopyNotice = message;
+            this.jsonPathCopyNoticeTimer = window.setTimeout(() => {
+                this.jsonPathCopyNotice = '';
+            }, 1800);
+        },
+
+        copyJsonPathText: function(text, successMessage) {
+            return this.copyTextToClipboard(text).then(() => {
+                this.showJsonPathCopyNotice(successMessage);
+            }).catch(() => {
+                this.showJsonPathCopyNotice('复制失败');
+            });
+        },
+
+        // 复制可直接使用的 JSONPath 值结果
+        copyJsonPathValues: function() {
+            if (this.jsonPathResults.length === 0) {
+                return;
+            }
+
+            this.copyButtonState = 'copying';
+
+            this.copyTextToClipboard(this.buildJsonPathValuePayload()).then(() => {
+                this.copyButtonState = 'success';
+                this.showJsonPathCopyNotice('值 JSON 已复制');
+                setTimeout(() => {
+                    this.copyButtonState = 'normal';
+                }, 2000);
+            }).catch(() => {
+                this.copyButtonState = 'error';
+                this.showJsonPathCopyNotice('复制失败');
+                setTimeout(() => {
+                    this.copyButtonState = 'normal';
+                }, 2000);
+            });
+        },
+
+        // 复制JSONPath查询明细
+        copyJsonPathResults: function() {
+            this.copyJsonPathText(this.buildJsonPathDetailsPayload(), '明细 JSON 已复制');
+        },
+
+        copyJsonPathPaths: function() {
+            this.copyJsonPathText(this.buildJsonPathPathsPayload(), '路径已复制');
+        },
+
+        copyJsonPathRowPath: function(result) {
+            this.copyJsonPathText(result.path, '路径已复制');
+        },
+
+        copyJsonPathRowValue: function(result) {
+            this.copyJsonPathText(this.serializeJsonPathValue(result.value), '值 JSON 已复制');
+        },
+
+        // 下载可直接使用的 JSONPath 值结果
         downloadJsonPathResults: function() {
-            let resultText = this.jsonPathResults.map(result => {
-                return `路径: ${result.path}\n值: ${this.formatJsonPathResult(result.value)}`;
-            }).join('\n\n');
+            let resultText = this.buildJsonPathValuePayload();
             
-            // 基于JSONPath生成文件名
-            let filename = this.generateFilenameFromPath(this.jsonPathQuery);
+            // 优先使用窗口备注，空备注时再基于 JSONPath 生成文件名
+            let filename = this.getJsonDownloadBasename(this.generateFilenameFromPath(this.jsonPathQuery));
             
-            let blob = new Blob([resultText], { type: 'text/plain;charset=utf-8' });
+            let blob = new Blob([resultText], { type: 'application/json;charset=utf-8' });
             let url = window.URL.createObjectURL(blob);
             let a = document.createElement('a');
             a.href = url;
-            a.download = filename + '.txt';
+            a.download = filename + '.json';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -837,17 +1863,107 @@ function deepParseJSONStrings(obj) {
     return obj;
 }
 
+function unpackTopLevelEscapedJSON(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return value;
+    }
 
-// 统一的 BigInt 安全解析（与format-lib/worker思路一致）：
-// 1) 自动给未加引号的 key 补双引号；2) 为可能的超长数字加标记；3) 用 reviver 还原为 BigInt
+    try {
+        const parsed = parseWithBigInt(value);
+        if (
+            typeof parsed === 'object' &&
+            parsed !== null &&
+            (Array.isArray(parsed) || Object.prototype.toString.call(parsed) === '[object Object]') &&
+            !(
+                parsed &&
+                typeof parsed.s === 'number' &&
+                typeof parsed.e === 'number' &&
+                Array.isArray(parsed.c) &&
+                Object.keys(parsed).length === 3
+            )
+        ) {
+            return deepParseJSONStrings(parsed);
+        }
+    } catch (e) {
+        // 保持原字符串，沿用旧行为
+    }
+
+    return value;
+}
+
+
+function isInsideQuotedSegment(text, offset) {
+    let quote = '';
+    let escaped = false;
+
+    for (let i = 0; i < offset; i++) {
+        const char = text[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (quote) {
+            if (char === quote) {
+                quote = '';
+            }
+            continue;
+        }
+        if (char === '"' || char === "'") {
+            quote = char;
+        }
+    }
+
+    return !!quote;
+}
+
+function replaceOutsideQuotedSegments(text, regex, replacer) {
+    return text.replace(regex, function () {
+        const args = Array.prototype.slice.call(arguments);
+        const offset = args[args.length - 2];
+        if (isInsideQuotedSegment(text, offset)) {
+            return args[0];
+        }
+        return replacer.apply(null, args);
+    });
+}
+
+function normalizeLooseJSONSource(text) {
+    let fixed = String(text).trim();
+
+    fixed = replaceOutsideQuotedSegments(fixed, /([\{,]\s*)'([^'\\]*?)'(\s*:)/g, function (match, prefix, key, suffix) {
+        return prefix + '"' + key + '"' + suffix;
+    });
+    fixed = replaceOutsideQuotedSegments(fixed, /([\{,]\s*)(\w+)(\s*:)/g, function (match, prefix, key, suffix) {
+        return prefix + '"' + key + '"' + suffix;
+    });
+    fixed = replaceOutsideQuotedSegments(fixed, /(:\s*)'([^'\\]*?)'/g, function (match, prefix, value) {
+        return prefix + '"' + value + '"';
+    });
+
+    return fixed;
+}
+
+// 统一的 BigInt 安全解析（与 json-auto-utils/format-lib/worker 思路一致）：
+// 1) 只在引号外修正宽松 key；2) 为可能的超长数字加标记；3) 用 reviver 还原为 BigInt
 function parseWithBigInt(text) {
-    // 先把使用单引号包裹的 key 统一替换成双引号
-    let fixed = String(text).replace(/([\{,]\s*)'([^'\\]*?)'(\s*:)/g, '$1"$2"$3');
-    // 补齐未加引号的 key
-    const keyFixRegex = /([\{,]\s*)(\w+)(\s*:)/g;
-    fixed = fixed.replace(keyFixRegex, '$1"$2"$3');
+    if (
+        typeof window !== 'undefined' &&
+        window.FHJsonAutoUtils &&
+        typeof window.FHJsonAutoUtils.parseWithBigInt === 'function'
+    ) {
+        return window.FHJsonAutoUtils.parseWithBigInt(text);
+    }
+
+    let fixed = normalizeLooseJSONSource(text);
+
     // 标记 16 位及以上的整数（允许值后有空白，再跟 , ] } 或结尾）
-    fixed = fixed.replace(/([:,\[]\s*)(-?\d{16,})(\s*)(?=(?:,|\]|\}|$))/g, function(m, p1, num, sp) {
+    // 使用 offset 检查匹配位置是否在 JSON 字符串内部，避免破坏嵌套转义的 JSON 字符串
+    fixed = fixed.replace(/([:,\[]\s*)(-?\d{16,})(\s*)(?=(?:,|\]|\}|$))/g, function(m, p1, num, sp, offset) {
+        if (isInsideQuotedSegment(fixed, offset)) return m;
         return p1 + '"__BigInt__' + num + '"' + sp;
     });
     return JSON.parse(fixed, function(key, value) {

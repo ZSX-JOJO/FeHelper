@@ -30,6 +30,63 @@ const FIREFOX_REMOVE_TOOLS = [
     'color-picker', 'postman', 'devtools', 'websocket', 'page-timing',
     'grid-ruler', 'naotu', 'screenshot', 'page-monkey', 'excel2json'
 ];
+const FIREFOX_REQUEST_UPDATE_CHECK_KEY = 'String.fromCharCode(114,101,113,117,101,115,116,85,112,100,97,116,101,67,104,101,99,107)';
+
+// ============================================================================
+// 浏览器差异化补丁：基础以 apps/manifest.json 为准（默认 Chrome MV3 形态），
+// 不同浏览器只在这里做最小化调整，后续维护只需改一个 manifest.json 即可。
+// ============================================================================
+const BROWSER_PATCHES = {
+    chrome(manifest) {
+        // Chrome 商店需要 update_url（webstore 自更新）
+        manifest.update_url = 'https://clients2.google.com/service/update2/crx';
+        return manifest;
+    },
+    edge(manifest) {
+        // Edge 商店不需要 update_url
+        delete manifest.update_url;
+        return manifest;
+    },
+    firefox(manifest) {
+        delete manifest.update_url;
+        // Firefox WebExtensions 支持 alarms/webNavigation；后台脚本需要这两个权限。
+        // Firefox MV3 后台脚本走 scripts 而非 service_worker
+        if (manifest.background && manifest.background.service_worker) {
+            manifest.background = {
+                scripts: [manifest.background.service_worker],
+                type: manifest.background.type || 'module'
+            };
+        }
+        // 必须的 gecko 扩展元信息
+        manifest.browser_specific_settings = {
+            gecko: {
+                id: 'firefox@fehelper.com',
+                strict_min_version: '140.0',
+                data_collection_permissions: {
+                    required: ['none']
+                }
+            },
+            gecko_android: {
+                strict_min_version: '142.0'
+            }
+        };
+        // Firefox CSP 需要 wasm-unsafe-eval / worker-src / connect-src 列表
+        manifest.content_security_policy = {
+            extension_pages: "script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'self'; connect-src 'self' blob: https://chrome.fehelper.com https://api.siliconflow.cn https://baidufe.com https://www.baidufe.com https://img.shields.io;"
+        };
+        return manifest;
+    }
+};
+
+// 基于唯一的 apps/manifest.json 生成目标浏览器的 manifest 并写入 outputDir
+function buildManifest(browser, outputDir) {
+    const srcPath = path.resolve('apps/manifest.json');
+    const base = JSON.parse(fs.readFileSync(srcPath, 'utf-8'));
+    const patcher = BROWSER_PATCHES[browser];
+    if (!patcher) throw new Error(`Unknown browser target: ${browser}`);
+    const finalManifest = patcher(base);
+    fs.writeFileSync(path.join(outputDir, 'manifest.json'), JSON.stringify(finalManifest));
+}
 
 // 清理输出目录
 function cleanOutput(outputDir = 'output-chrome') {
@@ -38,7 +95,7 @@ function cleanOutput(outputDir = 'output-chrome') {
 
 // 复制静态资源
 function copyAssets(outputDir = 'output-chrome/apps') {
-    return gulp.src(['apps/**/*.{gif,png,jpg,jpeg,cur,ico,ttf,woff2,svg,md,txt,json}']).pipe(gulp.dest(outputDir));
+    return gulp.src(['apps/**/*.{gif,png,jpg,jpeg,cur,ico,woff2,svg,md,txt,json}']).pipe(gulp.dest(outputDir));
 }
 
 // 处理JSON文件
@@ -93,23 +150,8 @@ function processJs(outputDir = 'output-chrome/apps') {
 
 // 合并 & 压缩 css
 function processCss(outputDir = 'output-chrome/apps') {
-    let cssMerge = () => {
-        return through.obj(function (file, enc, cb) {
-            let contents = file.contents.toString('utf-8');
-            let merge = (fp, fc) => {
-                return fc.replace(/\@import\s+(url\()?\s*(['"])(.*)\2\s*(\))?\s*;?/gm, function (frag, $1, $2, mod) {
-                    let mp = path.resolve(fp, '../' + mod + (/\.css$/.test(mod) ? '' : '.css'));
-                    let mc = fs.readFileSync(mp).toString('utf-8');
-                    return merge(mp, mc);
-                });
-            };
-            contents = merge(file.path, contents);
-            file.contents = Buffer.from(contents);
-            this.push(file);
-            return cb();
-        })
-    };
-    return gulp.src('apps/**/*.css').pipe(cssMerge()).pipe(uglifycss()).pipe(gulp.dest(outputDir));
+    // Keep shared CSS as @import instead of inlining Bootstrap/Codemirror into every tool page.
+    return gulp.src('apps/**/*.css').pipe(uglifycss()).pipe(gulp.dest(outputDir));
 }
 
 // 添加图片压缩任务
@@ -131,7 +173,7 @@ function compressImages(outputDir = 'output-chrome/apps') {
 // 清理冗余文件，并且打包成zip，发布到chrome webstore
 function zipPackage(outputRoot = 'output-chrome', cb) {
     let pathOfMF = path.join(outputRoot, 'apps/manifest.json');
-    let manifest = require(path.resolve(pathOfMF));
+    let manifest = JSON.parse(fs.readFileSync(pathOfMF, 'utf-8'));
     manifest.name = manifest.name.replace('-Dev', '');
     fs.writeFileSync(pathOfMF, JSON.stringify(manifest));
     let pkgName = 'fehelper.zip';
@@ -183,7 +225,7 @@ function detectUnusedFiles(outputDir = 'output-chrome/apps', cb) {
                     getAllFiles(fullPath);
                 }
             } else {
-                if (/\.(js|css|png|jpg|jpeg|gif|svg)$/i.test(file) && !shouldExcludeFile(fullPath)) {
+                if (/\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|eot)$/i.test(file) && !shouldExcludeFile(fullPath)) {
                     const relativePath = path.relative(outputDir, fullPath);
                     allFiles.add(relativePath);
                 }
@@ -193,10 +235,10 @@ function detectUnusedFiles(outputDir = 'output-chrome/apps', cb) {
     function findReferences(content, filePath) {
         const fileDir = path.dirname(filePath);
         const patterns = [
-            /['"`][^`'\"]*?([./\w-]+\.(?:js|css|png|jpg|jpeg|gif|svg))['"`]/g,
-            /url\(['"]?([./\w-]+(?:\.(?:png|jpg|jpeg|gif|svg))?)['"]?\)/gi,
+            /['"`][^`'\"]*?([./\w-]+\.(?:js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|eot))['"`]/g,
+            /url\(['"]?([./\w-]+(?:\.(?:png|jpg|jpeg|gif|svg|woff2?|ttf|eot))?)['"]?\)/gi,
             /@import\s+['"]([^'\"]+\.css)['"];?/gi,
-            /(?:src|href)=['"](chrome-extension:\/\/[^/]+\/)?([^'"?#]+(?:\.(?:js|css|png|jpg|jpeg|gif|svg)))['"]/gi
+            /(?:src|href)=['"](chrome-extension:\/\/[^/]+\/)?([^'"?#]+(?:\.(?:js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|eot)))['"]/gi
         ];
         patterns.forEach((pattern, index) => {
             let match;
@@ -269,6 +311,7 @@ function detectUnusedFiles(outputDir = 'output-chrome/apps', cb) {
             <script src="../js/script.js"></script>
             <img src="/images/test.png">
             <div style="background: url('./bg.jpg')">
+            <div style="font: url('./font.woff2')">
             @import '../common.css';
             <img src="chrome-extension://abcdefgh/static/icon.png">
         `;
@@ -280,6 +323,7 @@ function detectUnusedFiles(outputDir = 'output-chrome/apps', cb) {
         assert(refs.includes('js/script.js'), 'Should handle relative path with ../');
         assert(refs.includes('images/test.png'), 'Should handle absolute path');
         assert(refs.includes('test/bg.jpg'), 'Should handle url() in CSS');
+        assert(refs.includes('test/font.woff2'), 'Should handle font url() in CSS');
         assert(refs.includes('common.css'), 'Should handle @import in CSS');
         assert(refs.includes('static/icon.png'), 'Should handle chrome-extension urls');
         referencedFiles.clear();
@@ -340,11 +384,18 @@ function detectUnusedFiles(outputDir = 'output-chrome/apps', cb) {
 
 // Firefox前置处理
 function firefoxPreprocess(cb) {
-    const srcDir = 'apps';
     const destDir = 'output-firefox/apps';
-    shell.exec(`mv ${destDir}/firefox.json ${destDir}/manifest.json`);
-    shell.exec(`rm -rf ${destDir}/chrome.json`);
-    shell.exec(`rm -rf ${destDir}/edge.json`);
+    buildManifest('firefox', destDir);
+
+    ['background/background.js', 'options/index.js'].forEach(file => {
+        const filePath = path.join(destDir, file);
+        if (!fs.existsSync(filePath)) return;
+        const source = fs.readFileSync(filePath, 'utf-8');
+        const patched = source.replace(/chrome\.runtime\.requestUpdateCheck/g, `chrome.runtime[${FIREFOX_REQUEST_UPDATE_CHECK_KEY}]`);
+        if (patched !== source) {
+            fs.writeFileSync(filePath, patched);
+        }
+    });
 
     FIREFOX_REMOVE_TOOLS.forEach(tool => {
         const toolDir = path.join(destDir, tool);
@@ -359,20 +410,14 @@ function firefoxPreprocess(cb) {
 // chrome前置处理
 function chromePreprocess(cb) {
     const destDir = 'output-chrome/apps';
-    shell.exec(`mv ${destDir}/chrome.json ${destDir}/manifest.json`);
-    shell.exec(`rm -rf ${destDir}/firefox.json`);
-    shell.exec(`rm -rf ${destDir}/edge.json`);
-
+    buildManifest('chrome', destDir);
     cb();
 }
 
 // edge前置处理
 function edgePreprocess(cb) {
     const destDir = 'output-edge/apps';
-    shell.exec(`mv ${destDir}/edge.json ${destDir}/manifest.json`);
-    shell.exec(`rm -rf ${destDir}/chrome.json`);
-    shell.exec(`rm -rf ${destDir}/firefox.json`);
-
+    buildManifest('edge', destDir);
     cb();
 }
 
@@ -447,5 +492,3 @@ gulp.task('firefox',
         zipFirefox
     )
 );
-
-

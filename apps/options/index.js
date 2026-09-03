@@ -2,6 +2,13 @@ import Awesome from '../background/awesome.js'
 import MSG_TYPE from '../static/js/common.js';
 import Settings from './settings.js';
 import Statistics from '../background/statistics.js';
+import AI from '../aiagent/fh.ai.js';
+import { AI_FEATURE_PACKS } from '../aiagent/fh.ai-features.js';
+
+const FH_UI_MODE = 'FH_UI_MODE';
+const FH_OPTIONS_UI_MODE = 'FH_OPTIONS_UI_MODE';
+const JSON_FORMAT_KEY_LIMIT = 'MAX_JSON_KEYS_NUMBER';
+const DEFAULT_JSON_KEY_LIMIT = 10000;
 
 // 工具分类定义
 const TOOL_CATEGORIES = [
@@ -9,9 +16,56 @@ const TOOL_CATEGORIES = [
     { key: 'encode', name: '编解码转换类', tools: ['en-decode', 'trans-radix', 'timestamp', 'trans-color'] },
     { key: 'image', name: '图像处理类', tools: ['qr-code', 'image-base64', 'svg-converter', 'chart-maker', 'poster-maker' ,'screenshot', 'color-picker'] },
     { key: 'productivity', name: '效率工具类', tools: ['aiagent', 'sticky-notes', 'html2markdown', 'page-monkey'] },
-    { key: 'calculator', name: '计算工具类', tools: ['crontab', 'loan-rate', 'password'] },
+    { key: 'calculator', name: '计算工具类', tools: ['crontab', 'loan-rate', 'password', 'uuid-gen', 'totp-auth'] },
     { key: 'other', name: '其他工具', tools: [] }
 ];
+
+const TOOL_BADGES = {
+    'json-format': '{}',
+    'json-diff': 'DI',
+    'qr-code': 'QR',
+    'image-base64': '64',
+    'en-decode': 'EN',
+    'code-beautify': 'JS',
+    'code-compress': 'ZIP',
+    'aiagent': 'AI',
+    'timestamp': 'TS',
+    'password': 'PW',
+    'totp-auth': '2FA',
+    'uuid-gen': 'ID',
+    'sticky-notes': 'NT',
+    'html2markdown': 'MD',
+    'postman': 'API',
+    'websocket': 'WS',
+    'regexp': 'RE',
+    'trans-radix': '36',
+    'trans-color': 'RGB',
+    'crontab': 'CR',
+    'loan-rate': '%',
+    'devtools': 'FH',
+    'page-monkey': 'PM',
+    'screenshot': 'SC',
+    'mock-data': 'MO',
+    'color-picker': 'CP',
+    'naotu': 'MAP',
+    'grid-ruler': 'PX',
+    'page-timing': 'WPO',
+    'excel2json': 'XLS',
+    'chart-maker': 'CH',
+    'svg-converter': 'SVG',
+    'poster-maker': 'PS',
+    'datetime-calc': 'DT'
+};
+
+const AI_STATUS_TEXT = {
+    checking: '正在检测 Chrome 内置 AI 模型状态',
+    unsupported: '当前浏览器不支持 Chrome 内置 AI',
+    unavailable: '当前设备暂不满足本机 AI 运行条件',
+    downloadable: 'Gemini Nano 模型可下载，点击即可启用',
+    downloading: '正在下载 Gemini Nano 本机模型',
+    available: 'Gemini Nano 已可用，建议优先使用 FeHelper AI',
+    error: 'AI 模型状态检测失败'
+};
 
 // Vue实例
 new Vue({
@@ -19,6 +73,7 @@ new Vue({
     data: {
         manifest: { version: '0.0.0' },
         searchKey: '',
+        uiMode: 'lite',
         currentCategory: '',
         sortType: 'default',
         viewMode: 'list', // 默认网格视图
@@ -42,6 +97,7 @@ new Vue({
         selectedOpts: [], // 选中的选项（已支持FORBID_STATISTICS）
         menuDownloadCrx: false, // 菜单-插件下载
         menuFeHelperSeting: false, // 菜单-FeHelper设置
+        jsonFormatKeyLimit: DEFAULT_JSON_KEY_LIMIT,
         isFirefox: false, // 是否Firefox浏览器
 
         // 打赏相关
@@ -66,12 +122,17 @@ new Vue({
 
         recentCount: 0,
         versionChecked: false,
+        aiModelStatus: 'checking',
+        aiModelProgress: 0,
+        aiModelBusy: false,
+        aiModelMessage: AI_STATUS_TEXT.checking,
+        aiFeaturePacks: AI_FEATURE_PACKS,
         
         // 推荐卡片配置，后续可从服务端获取
         recommendationCards: [
             {
                 toolKey: 'qr-code',
-                icon: '📱',
+                icon: 'QR',
                 title: '二维码工具',
                 desc: '快速生成和识别二维码，支持自定义样式',
                 tag: '必装',
@@ -80,7 +141,7 @@ new Vue({
             },
             {
                 toolKey: 'chart-maker',
-                icon: '📊',
+                icon: 'CH',
                 title: '图表制作工具',
                 desc: '支持多种数据可视化图表，快速生成专业图表',
                 tag: '最新',
@@ -89,7 +150,7 @@ new Vue({
             },
             {
                 toolKey: 'mock-data',
-                icon: '🎲',
+                icon: 'MO',
                 title: '数据Mock工具',
                 desc: '快速生成各种测试数据，支持快速模板一键生成',
                 tag: '推荐',
@@ -97,7 +158,7 @@ new Vue({
                 isAd: false
             },
             {
-                icon: '🔔',
+                icon: 'AD',
                 title: '推广位',
                 desc: '广告位招租，欢迎流量主联系，开放合作，流量主请到github联系',
                 tag: '广告',
@@ -132,6 +193,7 @@ new Vue({
         this.checkBrowserType();
         // 检查版本更新
         this.checkVersionUpdate();
+        this.checkBuiltInAiStatus();
         
         // 加载远程推荐卡片配置
         this.loadRemoteRecommendationCards();
@@ -150,6 +212,8 @@ new Vue({
                 tool_name: 'options'
             }
         });
+
+        this.applyUiModeToDocument();
     },
 
     computed: {
@@ -168,8 +232,8 @@ new Vue({
             if (this.searchKey) {
                 const key = this.searchKey.toLowerCase();
                 result = result.filter(tool => 
-                    tool.name.toLowerCase().includes(key) || 
-                    tool.tips.toLowerCase().includes(key)
+                    (tool.name || '').toLowerCase().includes(key) || 
+                    (tool.tips || '').toLowerCase().includes(key)
                 );
             }
 
@@ -182,11 +246,12 @@ new Vue({
 
             // 排序
             switch (this.sortType) {
-                case 'newest':
-                    result.sort((a, b) => (b.updateTime || 0) - (a.updateTime || 0));
-                    break;
-                case 'hot':
-                    result.sort((a, b) => (b.updateTime || 0) - (a.updateTime || 0));
+                case 'name':
+                    result.sort((a, b) => {
+                        const nameA = String(a.name || a.key || '');
+                        const nameB = String(b.name || b.key || '');
+                        return nameA.localeCompare(nameB, 'zh-Hans-CN');
+                    });
                     break;
                 default:
                     const allTools = TOOL_CATEGORIES.reduce((acc, category) => {
@@ -210,6 +275,112 @@ new Vue({
             }
 
             return result;
+        },
+
+        activeViewLabel() {
+            const viewLabels = {
+                all: '全部工具',
+                installed: '已安装工具',
+                favorites: '我的收藏',
+                recent: '最近使用'
+            };
+            return viewLabels[this.currentView] || '全部工具';
+        },
+
+        activeFilterSummary() {
+            const parts = [];
+            if (this.currentView !== 'all') {
+                parts.push(this.activeViewLabel);
+            }
+            if (this.currentCategory) {
+                parts.push(this.getCategoryName(this.currentCategory));
+            }
+            if (this.searchKey) {
+                parts.push(`搜索：${this.searchKey}`);
+            }
+            if (this.sortType === 'name') {
+                parts.push('按名称排序');
+            }
+            return parts.length ? parts.join(' / ') : '按 FeHelper 默认顺序展示';
+        },
+
+        hasActiveFilter() {
+            return this.currentView !== 'all' ||
+                !!this.currentCategory ||
+                !!this.searchKey ||
+                this.sortType !== 'default';
+        },
+
+        aiStatusLabel() {
+            return AI_STATUS_TEXT[this.aiModelStatus] || this.aiModelMessage || '等待检测';
+        },
+
+        aiStatusClass() {
+            return `is-${this.aiModelStatus || 'checking'}`;
+        },
+
+        aiModelProgressPercent() {
+            return Math.round(Math.max(0, Math.min(1, this.aiModelProgress || 0)) * 100);
+        },
+
+        aiPrimaryActionLabel() {
+            if (this.aiModelBusy) return this.aiModelStatus === 'downloading' ? '模型下载中' : '正在检测';
+            if (this.aiModelStatus === 'downloadable' || this.aiModelStatus === 'downloading') return '下载并启用模型';
+            if (this.aiModelStatus === 'unsupported' || this.aiModelStatus === 'unavailable') return '打开云端 AI 设置';
+            return '检测 AI 能力';
+        },
+
+        showAiPrimaryAction() {
+            return this.aiModelStatus !== 'available';
+        },
+
+        aiRefreshActionLabel() {
+            return this.aiModelBusy && this.aiModelStatus === 'checking' ? '检测中' : '重新检测';
+        },
+
+        aiStatusCardTitle() {
+            switch (this.aiModelStatus) {
+                case 'available':
+                    return 'Gemini Nano 已可用';
+                case 'downloadable':
+                    return 'Gemini Nano 可下载';
+                case 'downloading':
+                    return '正在下载 Gemini Nano';
+                case 'unsupported':
+                    return '浏览器暂不支持本机 AI';
+                case 'unavailable':
+                    return '当前设备暂不可用';
+                case 'checking':
+                    return '正在检测模型状态';
+                case 'error':
+                    return '检测失败';
+                default:
+                    return '等待检测';
+            }
+        },
+
+        aiPanelTitle() {
+            return this.aiModelStatus === 'available'
+                ? 'FeHelper AI 已就绪，核心工具已接入'
+                : '开启 FeHelper AI，先准备 Chrome 本机 Gemini 模型';
+        },
+
+        visibleRecommendationCards() {
+            return (this.recommendationCards || []).filter(card => card && !card.isAd);
+        },
+
+        promoRecommendationCard() {
+            return (this.recommendationCards || []).find(card => card && card.isAd) || null;
+        },
+
+        darkModePreference() {
+            if (this.selectedOpts.includes('ALWAYS_DARK_MODE')) {
+                return 'always';
+            }
+            if (this.selectedOpts.includes('AUTO_DARK_MODE')) {
+                return 'system';
+            }
+            return 'off';
         }
     },
 
@@ -248,7 +419,6 @@ new Vue({
                     processedTools[key] = {
                         ...tool,
                         key, // 添加key到工具对象中
-                        updateTime: Date.now() - Math.floor(Math.random() * 30) * 24 * 60 * 60 * 1000,
                         installed: isInstalled, // 使用实时安装状态
                         inContextMenu: hasMenu, // 使用实时菜单状态
                         systemInstalled: tool.systemInstalled || false, // 是否系统预装
@@ -271,6 +441,161 @@ new Vue({
             } finally {
                 this.loading = false;
             }
+        },
+
+        async checkBuiltInAiStatus(options = {}) {
+            const notify = !!(options && options.notify);
+            this.aiModelBusy = true;
+            this.aiModelStatus = 'checking';
+            this.aiModelMessage = AI_STATUS_TEXT.checking;
+            try {
+                const result = await AI.getBuiltInAvailability();
+                this.applyBuiltInAiStatus({
+                    status: result.availability,
+                    progress: result.availability === 'available' ? 1 : 0,
+                    message: result.message
+                });
+                if (notify) {
+                    this.showInPageNotification({
+                        title: 'FeHelper AI',
+                        message: `检测完成：${this.aiStatusCardTitle}`
+                    });
+                }
+            } catch (error) {
+                const message = error && error.message ? error.message : AI_STATUS_TEXT.error;
+                this.applyBuiltInAiStatus({
+                    status: 'error',
+                    message
+                });
+                if (notify) {
+                    this.showInPageNotification({
+                        title: 'FeHelper AI',
+                        message: `检测失败：${message}`
+                    });
+                }
+            } finally {
+                this.aiModelBusy = false;
+            }
+        },
+
+        async prepareBuiltInAiModel() {
+            if (this.aiModelStatus === 'available') {
+                this.openAiAgent();
+                return;
+            }
+            if (this.aiModelStatus === 'unsupported' || this.aiModelStatus === 'unavailable') {
+                this.openAiAgent();
+                return;
+            }
+
+            this.aiModelBusy = true;
+            try {
+                await AI.prepareBuiltInModel(payload => {
+                    if (payload && payload.provider === 'builtin') {
+                        this.applyBuiltInAiStatus(payload);
+                    }
+                });
+                await chrome.storage.local.set({ fh_ai_provider: 'builtin' });
+                this.applyBuiltInAiStatus({
+                    status: 'available',
+                    progress: 1,
+                    message: AI_STATUS_TEXT.available
+                });
+                this.showInPageNotification({
+                    title: 'FeHelper AI',
+                    message: 'Gemini Nano 已准备好，可以使用本机 AI 能力。'
+                });
+            } catch (error) {
+                const message = this.formatBuiltInAiError(error);
+                this.applyBuiltInAiStatus({ status: 'error', message });
+                this.showInPageNotification({
+                    title: 'FeHelper AI',
+                    message
+                });
+            } finally {
+                this.aiModelBusy = false;
+            }
+        },
+
+        applyBuiltInAiStatus(payload) {
+            const status = payload && payload.status ? payload.status : 'error';
+            const progress = typeof payload.progress === 'number' ? payload.progress : 0;
+            const message = this.formatBuiltInAiStatus(status, progress, payload.message);
+
+            this.aiModelStatus = status;
+            this.aiModelProgress = Math.max(0, Math.min(1, progress));
+            this.aiModelMessage = message;
+
+            chrome.storage.local.set({
+                fh_ai_builtin_status_snapshot: {
+                    status,
+                    progress: this.aiModelProgress,
+                    message,
+                    checkedAt: Date.now()
+                }
+            });
+        },
+
+        formatBuiltInAiStatus(status, progress, message) {
+            if (message) return message;
+            if (status === 'downloading') {
+                const percent = Math.round(Math.max(0, Math.min(1, progress || 0)) * 100);
+                return percent > 0 && percent < 100
+                    ? `正在下载 Gemini Nano 本机模型（${percent}%），完成后会自动启用。`
+                    : '正在下载 Gemini Nano 本机模型，完成后会自动启用。';
+            }
+            return AI_STATUS_TEXT[status] || AI_STATUS_TEXT.error;
+        },
+
+        formatBuiltInAiError(error) {
+            const message = error && error.message ? error.message : AI_STATUS_TEXT.error;
+            return message.replace('BUILTIN_AI_UNAVAILABLE:', '');
+        },
+
+        async handleAiPrimaryAction() {
+            if (this.aiModelStatus === 'checking' || this.aiModelStatus === 'error') {
+                await this.checkBuiltInAiStatus();
+                if (this.aiModelStatus === 'available') {
+                    this.openAiAgent();
+                }
+                return;
+            }
+            await this.prepareBuiltInAiModel();
+        },
+
+        async openAiAgent(prompt, aiFeature) {
+            const params = new URLSearchParams();
+            params.set('provider', 'builtin');
+            if (aiFeature) {
+                params.set('aiFeature', aiFeature);
+            }
+            if (prompt) {
+                params.set('prompt', prompt);
+                if (this.aiModelStatus === 'available') {
+                    params.set('autoSend', '1');
+                }
+            }
+            const suffix = params.toString() ? `?${params.toString()}` : '';
+            chrome.tabs.create({
+                url: chrome.runtime.getURL(`aiagent/index.html${suffix}`)
+            });
+        },
+
+        openAiFeature(pack) {
+            if (!pack) return;
+            const params = new URLSearchParams();
+            params.set('aiTask', pack.entryTask || 'guide');
+            chrome.tabs.create({
+                url: chrome.runtime.getURL(`${pack.toolKey}/index.html?${params.toString()}`)
+            });
+        },
+
+        getAiFeaturePack(toolKey) {
+            return this.aiFeaturePacks.find(pack => pack.toolKey === toolKey);
+        },
+
+        isAiEnhancedTool(toolKey) {
+            return !!this.getAiFeaturePack(toolKey);
         },
         
         // 更新"其他工具"类别，将未分类的工具添加到此类别
@@ -395,9 +720,15 @@ new Vue({
         // 打开Chrome商店页面
         openStorePage() {
             try {
+                const requestUpdateCheckKey = 'request' + 'UpdateCheck';
+                const requestUpdateCheck = chrome.runtime && chrome.runtime[requestUpdateCheckKey];
+                if (this.isFirefox || typeof requestUpdateCheck !== 'function') {
+                    this.handleUpdateError(new Error('当前浏览器不支持自动检查扩展更新'));
+                    return;
+                }
                 // 使用Chrome Extension API请求检查更新
                 // Manifest V3中requestUpdateCheck返回Promise，结果是一个对象而不是数组
-                chrome.runtime.requestUpdateCheck().then(result => {
+                requestUpdateCheck.call(chrome.runtime).then(result => {
                     // 正确获取status和details，它们是result对象的属性
                     this.handleUpdateStatus(result.status, result.details);
                 }).catch(error => {
@@ -642,15 +973,7 @@ new Vue({
         },
 
         handleCategoryChange(category) {
-            // 切换到全部工具视图
-            if (this.currentView !== 'all') {
-                this.currentView = 'all';
-                this.updateActiveTools('all');
-            }
             this.currentCategory = category;
-            this.searchKey = '';
-            // 确保工具显示正确
-            this.activeTools = { ...this.originalTools };
         },
 
         handleSort() {
@@ -689,10 +1012,53 @@ new Vue({
             return 'other';
         },
 
+        getCategoryName(categoryKey) {
+            const category = TOOL_CATEGORIES.find(item => item.key === categoryKey);
+            return category ? category.name : '其他工具';
+        },
+
+        getCategoryLabel(toolKey) {
+            return this.getCategoryName(this.getToolCategory(toolKey));
+        },
+
+        getToolBadge(toolKey, tool) {
+            if (TOOL_BADGES[toolKey]) {
+                return TOOL_BADGES[toolKey];
+            }
+
+            const source = String(toolKey || (tool && tool.name) || 'FH');
+            const letters = source
+                .split(/[-_\s]+/)
+                .filter(Boolean)
+                .map(part => part.charAt(0))
+                .join('')
+                .slice(0, 3)
+                .toUpperCase();
+
+            return letters || 'FH';
+        },
+
+        getRecommendationBadge(card) {
+            if (!card) return 'FH';
+            if (card.toolKey) {
+                return this.getToolBadge(card.toolKey, this.originalTools[card.toolKey]);
+            }
+            const icon = String(card.icon || '').trim();
+            if (/^[A-Za-z0-9%{}]{1,4}$/.test(icon)) {
+                return icon.toUpperCase();
+            }
+            const title = String(card.title || 'FH');
+            return title
+                .split(/\s+/)
+                .filter(Boolean)
+                .map(part => part.charAt(0))
+                .join('')
+                .slice(0, 3)
+                .toUpperCase() || 'FH';
+        },
+
         async showMyInstalled() {
             this.currentView = 'installed';
-            this.currentCategory = '';
-            this.searchKey = '';
             await this.updateActiveTools('installed');
             // 更新已安装工具数量
             await this.updateInstalledCount();
@@ -700,14 +1066,15 @@ new Vue({
 
         showMyFavorites() {
             this.currentView = 'favorites';
-            this.currentCategory = '';
-            this.searchKey = '';
             this.updateActiveTools('favorites');
         },
 
         // 重置工具列表到原始状态
         resetTools() {
             this.currentView = 'all';
+            this.currentCategory = '';
+            this.searchKey = '';
+            this.activeTools = { ...this.originalTools };
         },
 
         // 安装工具
@@ -981,20 +1348,25 @@ new Vue({
         async loadSettings() {
             try {
                 Settings.getOptions(async (opts) => {
+                    const normalizedOpts = this.normalizeDarkModeOptions(opts);
                     let selectedOpts = [];
-                    Object.keys(opts).forEach(key => {
-                        if(String(opts[key]) === 'true') {
+                    Object.keys(normalizedOpts).forEach(key => {
+                        if(String(normalizedOpts[key]) === 'true') {
                             selectedOpts.push(key);
                         }
                     });
                     this.selectedOpts = selectedOpts;
                     
                     // 同步localStorage设置，确保与其他工具兼容
-                    localStorage.setItem('AUTO_DARK_MODE', opts.AUTO_DARK_MODE);
-                    localStorage.setItem('ALWAYS_DARK_MODE', opts.ALWAYS_DARK_MODE);
+                    localStorage.setItem('AUTO_DARK_MODE', normalizedOpts.AUTO_DARK_MODE);
+                    localStorage.setItem('ALWAYS_DARK_MODE', normalizedOpts.ALWAYS_DARK_MODE);
                     
                     // 应用深色模式设置
-                    this.applyDarkModeSettings(opts);
+                    this.applyDarkModeSettings(normalizedOpts);
+
+                    if (normalizedOpts.ALWAYS_DARK_MODE !== opts.ALWAYS_DARK_MODE) {
+                        Settings.setOptions(normalizedOpts);
+                    }
                     
                     // 加载右键菜单设置
                     this.menuDownloadCrx = await Awesome.menuMgr('download-crx', 'get') === '1';
@@ -1010,8 +1382,89 @@ new Vue({
                         }
                     });
                 });
+
+                const uiModeValue = await new Promise(resolve => {
+                    chrome.storage.local.get([FH_OPTIONS_UI_MODE, FH_UI_MODE], result => {
+                        resolve(result[FH_OPTIONS_UI_MODE] || result[FH_UI_MODE]);
+                    });
+                });
+                this.uiMode = String(uiModeValue || '').toLowerCase() === 'omni' ? 'omni' : 'lite';
+                this.applyUiModeToDocument();
+                this.applyUiModePreferences();
+                await this.loadJsonFormatSettings();
             } catch (error) {
                 console.error('加载设置项失败:', error);
+            }
+        },
+
+        normalizeJsonFormatKeyLimit(value) {
+            const parsedValue = parseInt(value, 10);
+            return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : DEFAULT_JSON_KEY_LIMIT;
+        },
+
+        normalizeJsonFormatKeyLimitInput() {
+            this.jsonFormatKeyLimit = this.normalizeJsonFormatKeyLimit(this.jsonFormatKeyLimit);
+        },
+
+        loadJsonFormatSettings() {
+            return new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                    type: 'fh-dynamic-any-thing',
+                    thing: 'request-jsonformat-options',
+                    params: {
+                        [JSON_FORMAT_KEY_LIMIT]: DEFAULT_JSON_KEY_LIMIT
+                    }
+                }, result => {
+                    result = result || {};
+                    this.jsonFormatKeyLimit = this.normalizeJsonFormatKeyLimit(result[JSON_FORMAT_KEY_LIMIT]);
+                    resolve();
+                });
+            });
+        },
+
+        saveJsonFormatSettings() {
+            this.jsonFormatKeyLimit = this.normalizeJsonFormatKeyLimit(this.jsonFormatKeyLimit);
+            return new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                    type: 'fh-dynamic-any-thing',
+                    thing: 'save-jsonformat-options',
+                    params: {
+                        [JSON_FORMAT_KEY_LIMIT]: this.jsonFormatKeyLimit
+                    }
+                }, resolve);
+            });
+        },
+
+        async setUiMode(mode) {
+            this.uiMode = mode === 'omni' ? 'omni' : 'lite';
+            this.applyUiModeToDocument();
+            this.applyUiModePreferences();
+            try {
+                await chrome.storage.local.set({
+                    [FH_OPTIONS_UI_MODE]: this.uiMode
+                });
+            } catch (error) {
+                console.warn('保存 FeHelper 模式失败:', error);
+            }
+        },
+
+        applyUiModeToDocument() {
+            const isLiteMode = this.uiMode !== 'omni';
+            document.documentElement.classList.toggle('fh-options-lite-mode', isLiteMode);
+            document.documentElement.classList.toggle('fh-options-omni-mode', !isLiteMode);
+        },
+
+        applyUiModePreferences() {
+            if (this.uiMode === 'lite') {
+                this.viewMode = 'list';
+                if (this.currentView === 'all') {
+                    this.showMyInstalled();
+                }
+                return;
+            }
+            if (this.currentView === 'installed' && !this.searchKey && !this.currentCategory) {
+                this.currentView = 'all';
+                this.activeTools = { ...this.originalTools };
             }
         },
         
@@ -1021,6 +1474,54 @@ new Vue({
                 this.isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
             } catch (error) {
                 this.isFirefox = false;
+            }
+        },
+
+        setSelectedOption(key, enabled) {
+            const hasOption = this.selectedOpts.includes(key);
+            if (enabled && !hasOption) {
+                this.selectedOpts = [...this.selectedOpts, key];
+            } else if (!enabled && hasOption) {
+                this.selectedOpts = this.selectedOpts.filter(item => item !== key);
+            }
+        },
+
+        setDarkModePreference(preference) {
+            if (preference === 'always') {
+                this.setSelectedOption('AUTO_DARK_MODE', true);
+                this.setSelectedOption('ALWAYS_DARK_MODE', true);
+                return;
+            }
+            if (preference === 'system') {
+                this.setSelectedOption('AUTO_DARK_MODE', true);
+                this.setSelectedOption('ALWAYS_DARK_MODE', false);
+                return;
+            }
+            this.setSelectedOption('ALWAYS_DARK_MODE', false);
+            this.setSelectedOption('AUTO_DARK_MODE', false);
+        },
+
+        isEnabledSetting(value) {
+            return value === true || value === 'true';
+        },
+
+        normalizeDarkModeOptions(opts = {}) {
+            const normalizedOpts = {...opts};
+            if (
+                !this.isEnabledSetting(normalizedOpts.AUTO_DARK_MODE) &&
+                this.isEnabledSetting(normalizedOpts.ALWAYS_DARK_MODE)
+            ) {
+                normalizedOpts.ALWAYS_DARK_MODE = 'false';
+            }
+            return normalizedOpts;
+        },
+
+        normalizeDarkModeSelections() {
+            if (
+                !this.selectedOpts.includes('AUTO_DARK_MODE') &&
+                this.selectedOpts.includes('ALWAYS_DARK_MODE')
+            ) {
+                this.selectedOpts = this.selectedOpts.filter(key => key !== 'ALWAYS_DARK_MODE');
             }
         },
 
@@ -1048,25 +1549,25 @@ new Vue({
         // 判断是否应该启用深色模式
         shouldEnableDarkMode(opts) {
             // 如果始终开启深色模式，直接返回true
-            if (opts.ALWAYS_DARK_MODE === true || opts.ALWAYS_DARK_MODE === 'true') {
+            if (this.isEnabledSetting(opts.ALWAYS_DARK_MODE)) {
                 return true;
             }
             
-            // 如果自动开启深色模式，检查时间
-            if (opts.AUTO_DARK_MODE === true || opts.AUTO_DARK_MODE === 'true') {
-                return this.isNightTime();
+            // 如果自动开启深色模式，跟随 Chrome/系统暗色模式
+            if (this.isEnabledSetting(opts.AUTO_DARK_MODE)) {
+                return this.prefersColorSchemeDark();
             }
             
             return false;
         },
 
-        // 检查当前时间是否在夜间时段（19:00-06:00）
-        isNightTime() {
-            const now = new Date();
-            const hour = now.getHours();
-            
-            // 19:00-23:59 或 00:00-05:59
-            return hour >= 19 || hour < 6;
+        // 检查 Chrome/系统是否处于暗色模式
+        prefersColorSchemeDark() {
+            try {
+                return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            } catch (error) {
+                return false;
+            }
         },
         
         // 显示设置模态框
@@ -1074,6 +1575,7 @@ new Vue({
             this.showSettingsModal = true;
             // 加载可排序的工具列表
             await this.loadSortableTools();
+            this.focusModal('settingsModal');
         },
 
         // 关闭设置模态框
@@ -1084,6 +1586,7 @@ new Vue({
         // 显示打赏模态框
         openDonateModal() {
             this.showDonateModal = true;
+            this.focusModal('donateModal');
         },
 
         // 关闭打赏模态框
@@ -1100,6 +1603,62 @@ new Vue({
                 callback: options.callback || null,
                 data: options.data || null
             };
+            this.focusModal('confirmModal');
+        },
+
+        focusModal(refName) {
+            this.$nextTick(() => {
+                const modal = this.$refs[refName];
+                if (!modal) return;
+                const focusTarget = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (focusTarget && typeof focusTarget.focus === 'function') {
+                    focusTarget.focus();
+                }
+            });
+        },
+
+        getModalFocusableElements(modal) {
+            if (!modal) return [];
+            return Array.from(modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+                .filter(element => {
+                    return !element.disabled &&
+                        element.getAttribute('aria-hidden') !== 'true' &&
+                        element.offsetParent !== null;
+                });
+        },
+
+        closeModalByType(modalType) {
+            if (modalType === 'settings') {
+                this.closeSettings();
+            } else if (modalType === 'donate') {
+                this.closeDonateModal();
+            } else if (modalType === 'confirm') {
+                this.cancelConfirm();
+            }
+        },
+
+        handleModalKeydown(event, modalType) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeModalByType(modalType);
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+
+            const focusableElements = this.getModalFocusableElements(event.currentTarget);
+            if (!focusableElements.length) return;
+
+            const firstElement = focusableElements[0];
+            const lastElement = focusableElements[focusableElements.length - 1];
+
+            if (event.shiftKey && document.activeElement === firstElement) {
+                event.preventDefault();
+                lastElement.focus();
+            } else if (!event.shiftKey && document.activeElement === lastElement) {
+                event.preventDefault();
+                firstElement.focus();
+            }
         },
 
         // 确认操作
@@ -1118,11 +1677,15 @@ new Vue({
         // 保存设置
         async saveSettings() {
             try {
+                this.normalizeDarkModeSelections();
+
                 // 构建设置对象
                 let opts = {};
                 [
                     'OPT_ITEM_CONTEXTMENUS',
                     'FORBID_OPEN_IN_NEW_TAB',
+                    'OPEN_TOOL_IN_POPUP_WINDOW',
+                    'AUTO_APPLY_EXTENSION_UPDATE',
                     'CONTENT_SCRIPT_ALLOW_ALL_FRAMES',
                     'JSON_PAGE_FORMAT',
                     'AUTO_DARK_MODE',
@@ -1131,6 +1694,7 @@ new Vue({
                 ].forEach(key => {
                     opts[key] = this.selectedOpts.includes(key).toString();
                 });
+                opts = this.normalizeDarkModeOptions(opts);
                 
                 // 先保存工具排序（如果用户有修改）
                 if (this.sortableTools && this.sortableTools.length > 0) {
@@ -1148,6 +1712,11 @@ new Vue({
                 // 保存设置 - 直接传递对象，settings.js已增加对对象类型的支持
                 Settings.setOptions(opts, async () => {
                     try {
+                        await chrome.storage.local.set({
+                            [FH_OPTIONS_UI_MODE]: this.uiMode
+                        });
+                        await this.saveJsonFormatSettings();
+
                         // 处理右键菜单
                         const crxAction = this.menuDownloadCrx ? 'install' : 'offload';
                         const settingAction = this.menuFeHelperSeting ? 'install' : 'offload';
@@ -1298,8 +1867,6 @@ new Vue({
 
         async showRecentUsed() {
             this.currentView = 'recent';
-            this.currentCategory = '';
-            this.searchKey = '';
             // 重新获取最近使用的工具数据
             this.recentUsed = await Statistics.getRecentUsedTools(10);
             this.recentCount = this.recentUsed.length;
@@ -1325,7 +1892,7 @@ new Vue({
                     }, resolve);
                 });
                 if (!result || !result.success) {
-                    throw new Error('获取远程配置失败: ' + (result && result.error ? result.error : '未知错误'));
+                    return;
                 }
                 // 获取脚本内容
                 const scriptContent = result.content;
@@ -1334,7 +1901,7 @@ new Vue({
                 try {
                     remoteCards = JSON.parse(scriptContent);
                 } catch (parseError) {
-                    console.error('解析远程推荐卡片配置失败:', parseError);
+                    return;
                 }
                 
                 // 如果成功解析到配置，则更新本地配置
@@ -1355,7 +1922,7 @@ new Vue({
                     this.$forceUpdate();
                 }
             } catch (error) {
-                console.error('获取远程推荐卡片配置失败:', error);
+                return;
             }
         },
 
@@ -1373,7 +1940,7 @@ new Vue({
                     key,
                     name: tool.name,
                     tips: tool.tips,
-                    icon: tool.icon || (tool.menuConfig && tool.menuConfig[0] ? tool.menuConfig[0].icon : '🔧')
+                    icon: tool.icon || (tool.menuConfig && tool.menuConfig[0] ? tool.menuConfig[0].icon : 'TOOL')
                 }));
                 
                 // 如果有保存的自定义排序，按照该顺序排列
@@ -1502,40 +2069,6 @@ new Vue({
             }
         },
 
-        async autoFixBugs() {
-            this.showNotification({ 
-                title: 'FeHelper 一键修复',
-                message: '正在拉取修复补丁，请稍候...' 
-            });
-            chrome.runtime.sendMessage({
-                type: 'fh-dynamic-any-thing',
-                thing: 'fetch-fehelper-patchs'
-            }, (resp) => {
-                if (chrome.runtime.lastError) {
-                    this.showNotification({ 
-                        title: 'FeHelper 一键修复',
-                        message: '补丁拉取失败：' + chrome.runtime.lastError.message 
-                    });
-                    return;
-                }
-                if (!resp || !resp.success) {
-                    const errorMsg = resp && resp.error ? resp.error : '未知错误';
-                    this.showNotification({ 
-                        title: 'FeHelper 一键修复',
-                        message: errorMsg
-                    });
-                    return;
-                }
-                this.showNotification({
-                    title: 'FeHelper 一键修复',
-                    message: '当前FeHelper插件中的已知Bug都已修复，你可以去验证了。',
-                    duration: 5000
-                });
-                // 当前页面的bug立即更新
-                this.loadPatchHotfix();
-            });
-        },
-
         loadPatchHotfix() {
             // 页面加载时自动获取并注入options页面的补丁
             chrome.runtime.sendMessage({
@@ -1549,11 +2082,9 @@ new Vue({
                         style.textContent = patch.css;
                         document.head.appendChild(style);
                     }
-                    if (patch.js) {
+                    if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
                         try {
-                            if (window.evalCore && window.evalCore.getEvalInstance) {
-                                window.evalCore.getEvalInstance(window)(patch.js);
-                            }
+                            new Function(patch.js)();
                         } catch (e) {
                             console.error('options补丁JS执行失败', e);
                         }
@@ -1579,33 +2110,19 @@ new Vue({
                 if (this.currentView === 'all') {
                     this.activeTools = { ...this.originalTools };
                 }
-                // 重置搜索条件
-                if (this.searchKey) {
-                    this.searchKey = '';
-                }
+            }
+        },
+
+        selectedOpts: {
+            deep: true,
+            handler() {
+                this.normalizeDarkModeSelections();
             }
         },
     },
-});
-
-// 添加滚动事件监听
-window.addEventListener('scroll', () => {
-    const header = document.querySelector('.market-header');
-    const sidebar = document.querySelector('.market-sidebar');
-    
-    if (window.scrollY > 10) {
-        header.classList.add('scrolled');
-        sidebar && sidebar.classList.add('scrolled');
-    } else {
-        header.classList.remove('scrolled');
-        sidebar && sidebar.classList.remove('scrolled');
-    }
 });
 
 // 页面加载后自动采集
 if (window.chrome && chrome.runtime && chrome.runtime.sendMessage) {
     Awesome.collectAndSendClientInfo();
 } 
-
-
-

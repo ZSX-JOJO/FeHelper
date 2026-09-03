@@ -15,6 +15,7 @@ var AppState = {
         timestampMs: 0
     },
     isTimeRunning: true,
+    selectedTimezone: 'Asia/Shanghai',
     
     // 智能时间解析器
     smartParser: {
@@ -49,6 +50,8 @@ var AppState = {
         inputTime: '',
         fromTimezone: 'Asia/Shanghai',
         toTimezone: 'America/New_York',
+        dstMode: 'auto',
+        manualOffset: '',
         result: null
     },
     
@@ -78,11 +81,12 @@ var TimeUtils = {
             };
         }
         
-        // Unix时间戳(毫秒) - 13位数字  
-        if (/^\d{13}$/.test(input)) {
+        // Unix时间戳(毫秒) - 11-13位数字
+        // 兼容历史短毫秒时间戳（例如 949680000000），同时避免把年份/短数字误判为毫秒。
+        if (/^\d{11,13}$/.test(input)) {
             return {
                 timestamp: parseInt(input),
-                format: 'Unix时间戳(毫秒)'
+                format: 'Unix时间戳(毫秒, 11-13位)'
             };
         }
         
@@ -111,7 +115,15 @@ var TimeUtils = {
             };
         }
         
-        // 尝试解析为日期字符串
+        // 尝试按当前选择时区解析日期字符串，便于模拟海外用户系统时间
+        var normalizedInput = this.normalizeDateTimeInput(input);
+        if (normalizedInput) {
+            return {
+                timestamp: getUTCTimestampFromLocal(normalizedInput, AppState.selectedTimezone),
+                format: '日期字符串(' + AppState.selectedTimezone + ')'
+            };
+        }
+
         var date = new Date(input);
         if (!isNaN(date.getTime())) {
             return {
@@ -126,12 +138,14 @@ var TimeUtils = {
     // 格式化时间戳为各种格式
     formatTimestamp: function(timestamp) {
         var date = new Date(timestamp);
+        var selectedTimezone = AppState.selectedTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
         
         return [
-            { label: '标准格式', value: this.formatDate(date, 'YYYY-MM-DD HH:mm:ss') },
+            { label: '选择时区时间', value: this.formatInTimezone(date, selectedTimezone) + ' (' + selectedTimezone + ')' },
             { label: 'Unix时间戳(秒)', value: Math.floor(timestamp / 1000).toString() },
             { label: 'Unix时间戳(毫秒)', value: timestamp.toString() },
             { label: 'UTC时间', value: this.formatDate(new Date(date.getTime() + date.getTimezoneOffset() * 60000), 'YYYY-MM-DD HH:mm:ss') + ' UTC' },
+            { label: '本地标准格式', value: this.formatDate(date, 'YYYY-MM-DD HH:mm:ss') },
             { label: '本地格式', value: date.toLocaleString('zh-CN') },
             { label: '相对时间', value: this.getRelativeTime(date) },
             { label: 'ISO 8601', value: date.toISOString() }
@@ -154,6 +168,42 @@ var TimeUtils = {
             .replace('HH', hour)
             .replace('mm', minute)
             .replace('ss', second);
+    },
+
+    formatInTimezone: function(date, timezone) {
+        var fmt = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        var parts = fmt.formatToParts(date);
+        var get = function(type) {
+            var item = parts.find(function(part) { return part.type === type; });
+            return item ? item.value : '00';
+        };
+        var hour = get('hour') === '24' ? '00' : get('hour');
+        return get('year') + '-' + get('month') + '-' + get('day') + ' ' + hour + ':' + get('minute') + ':' + get('second');
+    },
+
+    normalizeDateTimeInput: function(input) {
+        var value = String(input || '').trim().replace(/\//g, '-').replace('T', ' ');
+        var dateOnly = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        var dateTime = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
+        var m = dateTime || dateOnly;
+        if (!m) return '';
+        var pad = function(num) { return String(num).padStart(2, '0'); };
+        var y = m[1];
+        var mon = pad(m[2]);
+        var d = pad(m[3]);
+        var h = dateTime ? pad(m[4]) : '00';
+        var min = dateTime ? pad(m[5]) : '00';
+        var s = dateTime ? pad(m[6] || '0') : '00';
+        return y + '-' + mon + '-' + d + ' ' + h + ':' + min + ':' + s;
     },
     
     // 获取相对时间
@@ -284,6 +334,9 @@ var TimestampApp = {
         
         // 初始化界面
         this.initUI();
+
+        // 读取右键菜单传入的选中文本或页面上下文
+        this.loadContextMenuContent();
         
         // 启动时间更新
         this.startTimeUpdates();
@@ -364,6 +417,17 @@ var TimestampApp = {
                 self.copyToClipboard(this.value);
             });
         });
+
+        var currentTimezoneSelect = DOMUtils.$('.current-timezone-select');
+        if (currentTimezoneSelect) {
+            currentTimezoneSelect.addEventListener('change', function() {
+                AppState.selectedTimezone = this.value;
+                var baseTime = AppState.currentTime.timestampMs ? new Date(AppState.currentTime.timestampMs) : new Date();
+                AppState.currentTime.local = TimeUtils.formatInTimezone(baseTime, AppState.selectedTimezone);
+                self.updateTimeDisplay();
+                self.parseSmartTime();
+            });
+        }
         
         // 快捷操作按钮
         var quickButtons = DOMUtils.$$('.quick-buttons .btn');
@@ -469,6 +533,19 @@ var TimestampApp = {
                 self.convertTimezone();
             });
         }
+
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        if (dstModeSelect) {
+            dstModeSelect.addEventListener('change', function() {
+                AppState.timezoneExpert.dstMode = dstModeSelect.value === 'manual' ? 'manual' : 'auto';
+            });
+        }
+        if (dstOffsetInput) {
+            dstOffsetInput.addEventListener('input', function() {
+                AppState.timezoneExpert.manualOffset = dstOffsetInput.value.trim();
+            });
+        }
         
         // 数据库工具按钮
         var dbGenerateBtn = DOMUtils.$('.db-generate-btn');
@@ -484,9 +561,60 @@ var TimestampApp = {
     initUI: function() {
         // 设置初始标签页
         this.setActiveTab(AppState.activeTab);
+
+        var timezoneSelect = DOMUtils.$('.current-timezone-select');
+        if (timezoneSelect) {
+            var browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            if (Array.prototype.some.call(timezoneSelect.options, function(option) { return option.value === browserTimezone; })) {
+                AppState.selectedTimezone = browserTimezone;
+            }
+            timezoneSelect.value = AppState.selectedTimezone;
+        }
+
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        if (dstModeSelect) {
+            dstModeSelect.value = AppState.timezoneExpert.dstMode || 'auto';
+        }
+        if (dstOffsetInput) {
+            dstOffsetInput.value = AppState.timezoneExpert.manualOffset || '';
+        }
         
         // 初始化时间显示
         this.updateTimeDisplay();
+    },
+
+    loadContextMenuContent: function() {
+        if (location.protocol !== 'chrome-extension:' || !window.chrome || !chrome.tabs || !chrome.runtime) {
+            return;
+        }
+
+        chrome.tabs.query({currentWindow: true, active: true}, (tabs) => {
+            var activeTab = tabs && tabs.filter(tab => tab.active)[0];
+            if (!activeTab) return;
+
+            chrome.runtime.sendMessage({
+                type: 'fh-dynamic-any-thing',
+                thing: 'request-page-content',
+                tabId: activeTab.id
+            }).then(resp => {
+                if (!resp || !resp.content) return;
+                this.applySmartParserInput(resp.content);
+            }).catch(() => {});
+        });
+    },
+
+    applySmartParserInput: function(content) {
+        var value = String(content || '').trim();
+        if (!value) return;
+
+        this.setActiveTab('smart-parser');
+        var smartInput = DOMUtils.$('.smart-input');
+        if (smartInput) {
+            smartInput.value = value;
+        }
+        AppState.smartParser.input = value;
+        this.parseSmartTime();
     },
     
     // 设置活跃标签页
@@ -524,7 +652,7 @@ var TimestampApp = {
         
         function updateTime() {
             var now = new Date();
-            AppState.currentTime.local = TimeUtils.formatDate(now, 'YYYY-MM-DD HH:mm:ss');
+            AppState.currentTime.local = TimeUtils.formatInTimezone(now, AppState.selectedTimezone);
             AppState.currentTime.timestamp = Math.floor(now.getTime() / 1000);
             AppState.currentTime.timestampMs = now.getTime();
             
@@ -554,7 +682,7 @@ var TimestampApp = {
         AppState.isTimeRunning = !AppState.isTimeRunning;
         var toggleBtn = DOMUtils.$('.time-toggle-btn');
         if (toggleBtn) {
-            DOMUtils.setText(toggleBtn, AppState.isTimeRunning ? '⏸️ 暂停' : '▶️ 开始');
+            DOMUtils.setText(toggleBtn, AppState.isTimeRunning ? ' 暂停' : ' 开始');
             toggleBtn.className = AppState.isTimeRunning ? 'btn btn-sm btn-warning time-toggle-btn' : 'btn btn-sm btn-success time-toggle-btn';
         }
     },
@@ -602,7 +730,7 @@ var TimestampApp = {
             AppState.smartParser.results = [];
             AppState.smartParser.detectedFormat = '';
             
-            DOMUtils.setHTML(resultContainer, '<div class="alert alert-danger">❌ ' + error.message + '</div>');
+            DOMUtils.setHTML(resultContainer, '<div class="alert alert-danger">错误：' + error.message + '</div>');
             DOMUtils.setHTML(formatHints, '');
         }
     },
@@ -654,7 +782,7 @@ var TimestampApp = {
             html += '<div class="code-block">' +
                 '<div class="code-header">' +
                 '<span class="code-lang">' + code.lang + '</span>' +
-                '<button class="btn btn-xs btn-default" onclick="TimestampApp.copyToClipboard(\'' + code.code.replace(/'/g, "\\'").replace(/\n/g, '\\n') + '\')">📋 复制</button>' +
+                '<button class="btn btn-xs btn-default" onclick="TimestampApp.copyToClipboard(\'' + code.code.replace(/'/g, "\\'").replace(/\n/g, '\\n') + '\')"> 复制</button>' +
                 '</div>' +
                 '<pre class="code-content">' + code.code + '</pre>' +
                 '</div>';
@@ -954,6 +1082,10 @@ var TimestampApp = {
         var timeValue = timeInput.value.trim();
         var fromTimezone = fromSelect.value;
         var toTimezone = toSelect.value;
+        var dstModeSelect = DOMUtils.$('.dst-mode-select');
+        var dstOffsetInput = DOMUtils.$('.dst-offset-input');
+        var dstMode = dstModeSelect && dstModeSelect.value === 'manual' ? 'manual' : 'auto';
+        var manualOffset = dstOffsetInput ? dstOffsetInput.value.trim() : '';
         
         if (!timeValue) {
             DOMUtils.setHTML(resultsDiv, '<div class="text-warning">请输入时间</div>');
@@ -962,7 +1094,27 @@ var TimestampApp = {
         
         try {
             // 1. 解析为UTC时间戳
-            var utcTimestamp = getUTCTimestampFromLocal(timeValue, fromTimezone);
+            var normalizedTime = TimeUtils.normalizeDateTimeInput(timeValue);
+            if (!normalizedTime) {
+                throw new Error('请输入格式为 yyyy-MM-dd HH:mm:ss 的时间');
+            }
+            var utcTimestamp;
+            var sourceLabel = fromTimezone;
+            var strategyLabel = '自动：IANA/Intl 历史时区规则';
+            if (dstMode === 'manual') {
+                var offsetMinutes = parseUTCOffsetMinutes(manualOffset);
+                utcTimestamp = getUTCTimestampFromFixedOffsetLocal(normalizedTime, offsetMinutes);
+                sourceLabel = formatUTCOffset(offsetMinutes);
+                strategyLabel = '手动：固定 UTC 偏移 ' + sourceLabel;
+            } else {
+                utcTimestamp = getUTCTimestampFromLocal(normalizedTime, fromTimezone);
+            }
+
+            AppState.timezoneExpert.inputTime = normalizedTime;
+            AppState.timezoneExpert.fromTimezone = fromTimezone;
+            AppState.timezoneExpert.toTimezone = toTimezone;
+            AppState.timezoneExpert.dstMode = dstMode;
+            AppState.timezoneExpert.manualOffset = manualOffset;
 
             // 2. 用Intl.DateTimeFormat格式化为目标时区的本地时间
             var dt = new Date(utcTimestamp);
@@ -978,7 +1130,8 @@ var TimestampApp = {
 
             var html = '<div class="result-item">';
             html += '<strong>时区转换结果：</strong><br>';
-            html += '原时间：' + timeValue + ' (' + fromTimezone + ')<br>';
+            html += '原时间：' + normalizedTime + ' (' + sourceLabel + ')<br>';
+            html += '夏令时策略：' + strategyLabel + '<br>';
             html += '目标时区：' + toTimezone + '<br>';
             html += '转换结果：' + targetStr + '<br>';
             html += '</div>';
@@ -1055,11 +1208,9 @@ function loadPatchHotfix() {
                 style.textContent = patch.css;
                 document.head.appendChild(style);
             }
-            if (patch.js) {
+            if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
                 try {
-                    if (window.evalCore && window.evalCore.getEvalInstance) {
-                        window.evalCore.getEvalInstance(window)(patch.js);
-                    }
+                    new Function(patch.js)();
                 } catch (e) {
                     console.error('datetime-calc补丁JS执行失败', e);
                 }
@@ -1101,6 +1252,46 @@ window.TimestampApp = TimestampApp;
 window.AppState = AppState;
 window.TimeUtils = TimeUtils;
 
+function parseUTCOffsetMinutes(offsetText) {
+    var text = String(offsetText || '').trim().toUpperCase().replace(/\s+/g, '');
+    text = text.replace(/^(UTC|GMT)/, '');
+
+    var match = text.match(/^([+-]?)(\d{1,2})(?::?(\d{2}))?$/);
+    var decimalMatch = text.match(/^([+-]?)(\d{1,2})\.(\d+)$/);
+    if (!match && !decimalMatch) {
+        throw new Error('请输入有效的 UTC 偏移，例如 +08:00、UTC+9:30、GMT+5:45 或 +9.5');
+    }
+
+    var signText = (match || decimalMatch)[1];
+    var sign = signText === '-' ? -1 : 1;
+    var hours = Number((match || decimalMatch)[2]);
+    var minutes = 0;
+    if (decimalMatch) {
+        minutes = Math.round(Number('0.' + decimalMatch[3]) * 60);
+    } else {
+        minutes = Number(match[3] || 0);
+    }
+    if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) {
+        throw new Error('UTC 偏移范围必须在 -14:00 到 +14:00 之间');
+    }
+    return sign * (hours * 60 + minutes);
+}
+
+function formatUTCOffset(offsetMinutes) {
+    var sign = offsetMinutes < 0 ? '-' : '+';
+    var abs = Math.abs(offsetMinutes);
+    var hours = String(Math.floor(abs / 60)).padStart(2, '0');
+    var minutes = String(abs % 60).padStart(2, '0');
+    return 'UTC' + sign + hours + ':' + minutes;
+}
+
+function getUTCTimestampFromFixedOffsetLocal(timeStr, offsetMinutes) {
+    var m = String(timeStr || '').match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) throw new Error('请输入格式为 yyyy-MM-dd HH:mm:ss 的时间');
+    var y = Number(m[1]), mon = Number(m[2]), d = Number(m[3]), h = Number(m[4]), min = Number(m[5]), s = Number(m[6]);
+    return Date.UTC(y, mon - 1, d, h, min, s) - offsetMinutes * 60000;
+}
+
 // === 新增：更准确的原生JS IANA时区转换辅助函数 ===
 function getUTCTimestampFromLocal(timeStr, tz) {
     // 只支持 yyyy-MM-dd HH:mm:ss
@@ -1134,6 +1325,11 @@ function getUTCTimestampFromLocal(timeStr, tz) {
     // 4. 用utcGuess + diff 得到正确的UTC时间戳
     return utcGuess + diff;
 }
+
+window.parseUTCOffsetMinutes = parseUTCOffsetMinutes;
+window.formatUTCOffset = formatUTCOffset;
+window.getUTCTimestampFromFixedOffsetLocal = getUTCTimestampFromFixedOffsetLocal;
+window.getUTCTimestampFromLocal = getUTCTimestampFromLocal;
 
 // 事件委托：解析结果区域点击复制
 (function() {

@@ -69,6 +69,13 @@
     padding-top: 6px
 }
 
+.fh-large-json-plain {
+    display: block;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 html.fh-jf  pre {
     /* padding: 36px 5px 5px 5px */
 }
@@ -94,9 +101,44 @@ html.fh-jf .item.fh-hover {
     border-radius: 2px;
 }
 
+html.fh-jf .item.fh-json-search-match > .key,
+html.fh-jf .item.fh-json-search-match > .string,
+html.fh-jf .item.fh-json-search-match > .number,
+html.fh-jf .item.fh-json-search-match > .bool,
+html.fh-jf .item.fh-json-search-match > .null {
+    border-radius: 2px;
+    background: rgba(250, 204, 21, 0.35);
+}
+
+html.fh-jf .item.fh-json-search-active > .key,
+html.fh-jf .item.fh-json-search-active > .string,
+html.fh-jf .item.fh-json-search-active > .number,
+html.fh-jf .item.fh-json-search-active > .bool,
+html.fh-jf .item.fh-json-search-active > .null {
+    background: #fde68a;
+    color: #713f12;
+}
+
 /* 深色主题悬停效果 */
 html.fh-jf .theme-dark .item.fh-hover {
     background-color: rgba(255, 255, 255, 0.02);
+}
+
+html.fh-jf .theme-dark .item.fh-json-search-match > .key,
+html.fh-jf .theme-dark .item.fh-json-search-match > .string,
+html.fh-jf .theme-dark .item.fh-json-search-match > .number,
+html.fh-jf .theme-dark .item.fh-json-search-match > .bool,
+html.fh-jf .theme-dark .item.fh-json-search-match > .null {
+    background: rgba(234, 179, 8, 0.28);
+}
+
+html.fh-jf .theme-dark .item.fh-json-search-active > .key,
+html.fh-jf .theme-dark .item.fh-json-search-active > .string,
+html.fh-jf .theme-dark .item.fh-json-search-active > .number,
+html.fh-jf .theme-dark .item.fh-json-search-active > .bool,
+html.fh-jf .theme-dark .item.fh-json-search-active > .null {
+    background: #a16207;
+    color: #fff7ed;
 }
 
 /* VS Code主题悬停效果 */
@@ -127,6 +169,11 @@ html.fh-jf .item-line {
     align-items: center;
     flex-wrap: nowrap;
     white-space: nowrap;
+}
+
+html.fh-jf .item-line.item-line-wrap {
+    display: block;
+    white-space: normal;
 }
 
 html.fh-jf .item-line .key {
@@ -176,6 +223,17 @@ html.fh-jf .item-line .string {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 200px;
+}
+
+html.fh-jf .item-line.item-line-wrap .string,
+html.fh-jf .item-line .string.string-long {
+    display: inline;
+    white-space: pre-wrap;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: none;
 }
 
 html.fh-jf .item .string a {
@@ -390,8 +448,16 @@ html.fh-jf  body {
     margin: 0;
 }
 
+html.fh-jf,
+html.fh-jf body {
+    min-height: 100%;
+    height: auto !important;
+    overflow-y: auto !important;
+}
+
 html.fh-jf body {
     padding: 0 8px;
+    overflow-x: auto;
 }
 
 /* 工具栏 */
@@ -482,6 +548,8 @@ html.fh-jf .mod-json .format-item button {
 
 html.fh-jf .mod-contentscript {
     width: auto;
+    min-height: calc(100vh - 72px);
+    overflow: visible;
 }
 
 #optionBar {
@@ -541,6 +609,17 @@ html.fh-jf .hide-status-bar #statusBar {
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+}
+
+#jsonSelectionMeta {
+    display: inline-block;
+    max-width: min(52vw, 640px);
+    overflow: hidden;
+    color: #475569;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+    white-space: nowrap;
 }
 
 /* 语言选择下拉框样式 */
@@ -688,6 +767,16 @@ html.fh-jf svg:not(:root) {
     padding-bottom: 4px;
     margin:20px 0 10px;
 }
+.mod-setting-panel .setting-section-title {
+    margin: 12px 0 6px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+.mod-setting-panel h4 + form > .setting-section-title:first-child {
+    margin-top: 8px;
+}
 .mod-setting-panel input[name="maxlength"] {
     width:50px;
     background: #fff;
@@ -710,7 +799,42 @@ html.fh-jf svg:not(:root) {
 .mod-setting-panel .btns {
     margin-top:20px;
 }
-.mod-setting-panel input[name="reset"] {
+.mod-setting-panel .setting-support-link {
+    margin: 14px 0 2px;
+    padding: 12px 0 0;
+    border-top: 1px solid #e2e8f0;
+}
+.mod-setting-panel .setting-donate-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #0f8a5f;
+    font-weight: 700;
+    line-height: 1.3;
+    text-decoration: underline;
+    text-decoration-color: rgba(15, 138, 95, 0.42);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+}
+.mod-setting-panel .setting-donate-link:hover {
+    color: #047857;
+    text-decoration-color: currentColor;
+}
+.mod-setting-panel .setting-donate-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: #d1fae5;
+    color: #047857;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    text-decoration: none;
+}
+.mod-setting-panel input[name="close"] {
     margin-left:20px;
 }
 .mod-setting-panel form {
@@ -805,6 +929,880 @@ html.fh-jf svg:not(:root) {
     background-color: #e6edff;
     box-shadow: 0 2px 5px rgba(0,0,0,0.15);
     transform: translateY(-1px);
+}
+
+/* 自动格式化页顶部工作条 */
+html.fh-jf .x-toolbar.fh-json-viewbar {
+    box-sizing: border-box;
+    display: flex;
+    width: auto;
+    min-height: 46px;
+    margin: 0 -8px 14px;
+    padding: 8px 12px;
+    align-items: center;
+    gap: 12px;
+    border: 0;
+    border-bottom: 1px solid #dbe3ef;
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04), 0 10px 24px rgba(15, 23, 42, 0.08);
+    color: #1f2937;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 12px;
+    line-height: 1.2;
+    overflow: visible;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar[style*="display: block"],
+html.fh-jf .x-toolbar.fh-json-viewbar[style*="display:block"] {
+    display: flex !important;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar * {
+    box-sizing: border-box;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .x-split {
+    display: none;
+}
+
+html.fh-jf .fh-viewbar-brand,
+html.fh-jf .fh-viewbar-main,
+html.fh-jf .fh-viewbar-actions,
+html.fh-jf .fh-viewbar-group {
+    display: flex;
+    align-items: center;
+}
+
+html.fh-jf .fh-viewbar-brand {
+    flex: 0 0 auto;
+    gap: 7px;
+    min-width: 166px;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-decoration: none;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-logo img {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-title-divider {
+    flex: 0 0 auto;
+    color: #94a3b8;
+    font-size: 13px;
+    line-height: 1;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-title {
+    display: inline-flex;
+    align-items: center;
+    height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #1f2937;
+    font-size: 13px;
+    font-weight: 760;
+    line-height: 1.2;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-viewbar-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
+    overflow-x: visible;
+    overflow-y: visible;
+    scrollbar-width: none;
+}
+
+html.fh-jf .fh-viewbar-main::-webkit-scrollbar {
+    display: none;
+}
+
+html.fh-jf body.fh-json-compact .fh-viewbar-brand {
+    min-width: auto;
+    gap: 0;
+}
+
+html.fh-jf body.fh-json-compact .fh-viewbar-logo span,
+html.fh-jf body.fh-json-compact .fh-viewbar-title-divider,
+html.fh-jf body.fh-json-compact .fh-viewbar-title,
+html.fh-jf body.fh-json-compact .fh-viewbar-actions > .x-donate-link,
+html.fh-jf body.fh-json-compact .fh-viewbar-actions > .x-other-tools {
+    display: none;
+}
+
+html.fh-jf body.fh-json-compact .x-toolbar.fh-json-viewbar {
+    min-height: 38px;
+    gap: 6px;
+    padding: 5px 8px;
+}
+
+html.fh-jf body.fh-json-compact .x-toolbar.fh-json-viewbar .fh-viewbar-group {
+    min-height: 30px;
+    padding: 2px 3px;
+}
+
+html.fh-jf body.fh-json-compact .fh-radio-pill span,
+html.fh-jf body.fh-json-compact .fh-toggle-pill span,
+html.fh-jf body.fh-json-compact .fh-sort-trigger,
+html.fh-jf body.fh-json-compact .fh-search-trigger,
+html.fh-jf body.fh-json-compact .x-toolbar.fh-json-viewbar .xjf-btn {
+    height: 24px;
+    line-height: 24px;
+    padding: 0 9px;
+    font-size: 12px;
+}
+
+html.fh-jf body.fh-json-compact .fh-viewbar-actions > .x-settings,
+html.fh-jf body.fh-json-compact .fh-viewbar-actions > #toggleBtn,
+html.fh-jf body.fh-json-compact .fh-viewbar-actions > .xjf-btn {
+    min-height: 28px;
+    padding: 0 10px;
+}
+
+html.fh-jf body.fh-json-compact .fh-auto-mode-switch {
+    min-height: 28px;
+    padding: 2px;
+}
+
+html.fh-jf body.fh-json-compact .fh-auto-mode-switch button {
+    height: 24px;
+    padding: 0 9px;
+    line-height: 24px;
+}
+
+html.fh-jf body.fh-json-compact .fh-json-search-box input {
+    width: 148px;
+    height: 24px;
+    line-height: 24px;
+}
+
+html.fh-jf body.fh-json-compact .fh-json-search-count {
+    height: 24px;
+    line-height: 22px;
+}
+
+html.fh-jf body.fh-ui-mode-lite .fh-omni-tools,
+html.fh-jf body.fh-ui-mode-lite .fh-viewbar-actions > .x-other-tools,
+html.fh-jf body.fh-ui-mode-lite .fh-viewbar-actions > .x-donate-link {
+    display: none !important;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-omni-tools {
+    display: inline-flex;
+    position: relative;
+    gap: 5px;
+    overflow: visible;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar #fhJsonExcludeSite.is-excluded {
+    background: #dcfce7;
+    color: #166534;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar #fhJsonExcludeSite.is-excluded:hover {
+    background: #bbf7d0;
+    color: #14532d;
+}
+
+html.fh-jf .fh-search-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+html.fh-jf .fh-search-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 26px;
+    margin: 0;
+    padding: 0 10px 0 11px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    font: 800 12px/26px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    white-space: nowrap !important;
+    transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+html.fh-jf .fh-search-trigger:hover,
+html.fh-jf .fh-search-menu:focus-within .fh-search-trigger {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+html.fh-jf .fh-search-trigger strong {
+    color: #94a3b8;
+    font: inherit;
+}
+
+html.fh-jf .fh-search-trigger.has-result strong {
+    color: #2563eb;
+}
+
+html.fh-jf .fh-search-trigger i {
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(45deg);
+}
+
+html.fh-jf .fh-search-popover {
+    position: absolute;
+    top: calc(100% + 7px);
+    left: 0;
+    z-index: 2147483647;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    padding: 6px;
+    border: 1px solid #d8dee9;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+    visibility: hidden;
+}
+
+html.fh-jf .fh-search-menu:hover .fh-search-popover,
+html.fh-jf .fh-search-menu:focus-within .fh-search-popover {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+    visibility: visible;
+}
+
+html.fh-jf .fh-search-popover::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: 8px;
+}
+
+html.fh-jf .fh-json-search-box,
+html.fh-jf .fh-node-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+html.fh-jf .fh-node-actions {
+    padding-left: 5px;
+    border-left: 1px solid #d8dee9;
+}
+
+html.fh-jf .fh-json-search-box input {
+    width: 168px;
+    height: 26px;
+    min-width: 118px;
+    margin: 0;
+    padding: 0 10px;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 26px;
+    outline: none;
+}
+
+html.fh-jf .fh-json-search-box input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+
+html.fh-jf .fh-json-search-box input:disabled,
+html.fh-jf .x-toolbar.fh-json-viewbar .xjf-btn:disabled {
+    cursor: default;
+    opacity: 0.48;
+}
+
+html.fh-jf .fh-json-search-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: auto;
+    padding: 0;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: inherit;
+}
+
+html.fh-jf .fh-json-search-count.is-empty {
+    color: #94a3b8;
+}
+
+html.fh-jf .fh-auto-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-height: 30px;
+    padding: 3px;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    background: #f8fafc;
+}
+
+html.fh-jf .fh-auto-mode-switch button {
+    height: 24px;
+    margin: 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 800;
+    line-height: 24px;
+}
+
+html.fh-jf .fh-auto-mode-switch button:hover {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+html.fh-jf .fh-auto-mode-switch button.selected {
+    background: #2563eb;
+    color: #fff;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-actions > .x-other-tools,
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-actions > .x-donate-link {
+    display: none !important;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-viewbar-group {
+    flex: 0 0 auto;
+    min-height: 32px;
+    gap: 4px;
+    padding: 3px 4px;
+    border: 1px solid #dfe6f1;
+    border-radius: 12px;
+    background: rgba(248, 250, 252, 0.92);
+    white-space: nowrap !important;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .fh-sort-group {
+    display: inline-flex;
+    position: relative;
+    gap: 0;
+    overflow: visible;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .x-stitle {
+    padding: 0 7px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+html.fh-jf .fh-sort-menu {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+html.fh-jf .fh-sort-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 26px;
+    margin: 0;
+    padding: 0 10px 0 11px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    font: 800 12px/26px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    white-space: nowrap !important;
+    transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+html.fh-jf .fh-sort-trigger:hover,
+html.fh-jf .fh-sort-menu:focus-within .fh-sort-trigger {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+html.fh-jf .fh-sort-trigger strong {
+    color: #2563eb;
+    font: inherit;
+}
+
+html.fh-jf .fh-sort-trigger i {
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(45deg);
+}
+
+html.fh-jf .fh-sort-options {
+    position: absolute;
+    top: calc(100% + 7px);
+    left: 0;
+    z-index: 2147483647;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    min-width: 98px;
+    height: auto;
+    padding: 5px;
+    border: 1px solid #d8dee9;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14);
+    opacity: 0;
+    overflow: visible;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+    visibility: hidden;
+}
+
+html.fh-jf .fh-sort-menu:hover .fh-sort-options,
+html.fh-jf .fh-sort-menu:focus-within .fh-sort-options {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+    visibility: visible;
+}
+
+html.fh-jf .fh-sort-options::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: 8px;
+}
+
+html.fh-jf .fh-sort-options .fh-sort-option {
+    display: flex;
+    width: 100%;
+}
+
+html.fh-jf .fh-sort-options .fh-sort-option span {
+    width: 100%;
+    justify-content: flex-start;
+}
+
+html.fh-jf .fh-radio-pill,
+html.fh-jf .fh-toggle-pill {
+    position: relative;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    color: #475569;
+    cursor: pointer;
+    font-weight: 700;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-radio-pill input,
+html.fh-jf .fh-toggle-pill input {
+    position: absolute !important;
+    inset: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    opacity: 0;
+    cursor: pointer;
+}
+
+html.fh-jf .fh-radio-pill span,
+html.fh-jf .fh-toggle-pill span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-radio-pill:hover span,
+html.fh-jf .fh-toggle-pill:hover span {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+html.fh-jf .fh-radio-pill input:checked + span,
+html.fh-jf .fh-toggle-pill input:checked + span {
+    background: #2563eb;
+    color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+html.fh-jf .fh-toggle-pill input:checked + span {
+    background: #0f8a5f;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .xjf-btn {
+    width: auto;
+    height: 26px;
+    min-width: 0;
+    margin: 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #475569;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 26px;
+    transition: background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .xjf-btn:hover {
+    background: #e2e8f0;
+    color: #0f172a;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .xjf-btn:active,
+html.fh-jf .fh-viewbar-actions > *:active {
+    transform: translateY(1px);
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar #jsonGetCorrectCnt {
+    color: #b45309;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar #optionBar.fh-option-bar {
+    display: inline-flex !important;
+    position: static !important;
+    align-items: center;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar #optionBar.fh-option-bar:empty {
+    display: none !important;
+}
+
+html.fh-jf .fh-viewbar-actions {
+    position: static;
+    top: auto;
+    flex: 0 0 auto;
+    float: none;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    color: #64748b;
+    cursor: default;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-settings,
+html.fh-jf .fh-viewbar-actions > #toggleBtn,
+html.fh-jf .fh-viewbar-actions > .x-donate-link,
+html.fh-jf .fh-viewbar-actions > .x-other-tools,
+html.fh-jf .fh-viewbar-actions > .xjf-btn {
+    position: static;
+    top: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    margin: 0;
+    padding: 0 11px;
+    border: 1px solid #d8dee9;
+    border-radius: 999px;
+    background: #fff;
+    box-shadow: none;
+    color: #475569;
+    cursor: pointer;
+    float: none;
+    gap: 4px;
+    text-decoration: none;
+    transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-settings:hover,
+html.fh-jf .fh-viewbar-actions > #toggleBtn:hover,
+html.fh-jf .fh-viewbar-actions > .x-other-tools:hover,
+html.fh-jf .fh-viewbar-actions > .xjf-btn:hover {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #0f172a;
+    box-shadow: none;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-settings svg {
+    width: 13px;
+    height: 13px;
+    fill: currentColor;
+}
+
+html.fh-jf .fh-viewbar-actions > .fh-collapse-icon {
+    display: none;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+}
+
+html.fh-jf .fh-viewbar-actions > #toggleBtn .fh-toggle-label {
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-donate-link {
+    border-color: #bbf7d0;
+    background: #f0fdf4;
+    color: #0f8a5f;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-donate-link:hover {
+    border-color: #86efac;
+    background: #dcfce7;
+    color: #047857;
+    box-shadow: none;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-donate-link a,
+html.fh-jf .fh-viewbar-actions > .x-other-tools,
+html.fh-jf .fh-viewbar-actions > #toggleBtn {
+    color: inherit;
+    text-decoration: none;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-donate-link a {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-settings span,
+html.fh-jf .fh-viewbar-actions > .x-donate-link span,
+html.fh-jf .fh-viewbar-actions > .x-other-tools span {
+    white-space: nowrap !important;
+}
+
+html.fh-jf .fh-viewbar-actions .nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 999px;
+    background: #d1fae5;
+    color: #047857;
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 800;
+    line-height: 1;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-other-tools {
+    border-color: #dbeafe;
+    background: #eff6ff;
+    color: #1d4ed8;
+    padding: 0 9px;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-other-tools:hover {
+    border-color: #bfdbfe;
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+html.fh-jf .fh-viewbar-actions > .x-donate-link-us,
+html.fh-jf .fh-viewbar-actions > .x-other-tools-us {
+    display: none;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar .mod-setting-panel {
+    top: calc(100% + 8px);
+    right: 10px;
+    overflow: hidden;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse {
+    position: fixed;
+    top: 10px;
+    right: 0;
+    left: auto;
+    z-index: 2147483647;
+    width: auto;
+    min-height: 30px;
+    margin: 0;
+    padding: 4px 8px 4px 6px;
+    border: 1px solid #dbe3ef;
+    border-right: 0;
+    border-radius: 6px 0 0 6px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: -2px 5px 14px rgba(15, 23, 42, 0.1);
+    pointer-events: auto;
+    transform: translateX(0);
+    transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease;
+    will-change: transform;
+}
+
+html.fh-jf body.fh-json-compact .x-toolbar.fh-json-viewbar.t-collapse {
+    min-height: 30px;
+    padding: 4px 8px 4px 6px;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-brand,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-main,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .fh-auto-mode-switch,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > #fhJsonExcludeSite,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .x-settings,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .x-donate-link,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .x-other-tools {
+    display: none;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > #toggleBtn {
+    display: inline-flex;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions {
+    align-items: center;
+    gap: 6px;
+    min-height: 0;
+    padding: 0;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .fh-collapse-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    opacity: 1;
+    position: static;
+    top: auto;
+    margin: 0 0 0 9px;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .fh-collapse-icon img {
+    display: block;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    opacity: 1;
+    position: static;
+    top: auto;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > #toggleBtn {
+    height: 22px;
+    min-height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 22px;
+    transition: color .16s ease, opacity .16s ease;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > #toggleBtn:hover {
+    color: #1e40af;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"] {
+    box-shadow: -1px 3px 10px rgba(15, 23, 42, 0.08);
+    transform: translateX(calc(100% - 36px));
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"]:hover,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"]:focus-within {
+    box-shadow: -2px 5px 14px rgba(15, 23, 42, 0.1);
+    transform: translateX(0);
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"] .fh-toggle-label {
+    opacity: 0;
+}
+
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"]:hover .fh-toggle-label,
+html.fh-jf .x-toolbar.fh-json-viewbar.t-collapse[data-fh-json-toolbar-tucked="1"]:focus-within .fh-toggle-label {
+    opacity: 1;
+}
+
+@media (max-width: 960px) {
+    html.fh-jf .x-toolbar.fh-json-viewbar {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    html.fh-jf .fh-viewbar-brand {
+        min-width: 0;
+    }
+
+    html.fh-jf .fh-viewbar-main {
+        order: 3;
+        width: 100%;
+    }
+
+    html.fh-jf .fh-viewbar-actions {
+        margin-left: auto;
+    }
+
+    html.fh-jf .fh-search-popover {
+        right: 0;
+        left: auto;
+        flex-wrap: wrap;
+    }
 }
 
 /*================ 皮肤：theme-default ===================*/
@@ -968,6 +1966,9 @@ html.fh-jf .theme-dark #jsonPath {
     border-color: #444;
     color: #ccc;
 }
+html.fh-jf .theme-dark #jsonSelectionMeta {
+    color: #a7b0c0;
+}
 html.fh-jf .theme-dark .boxOpt {
     background: -webkit-linear-gradient(#222,#222,#111);
     border: 1px solid #333;
@@ -1060,6 +2061,245 @@ html.fh-jf .theme-dark .x-other-tools {
     background-color: #222;
     border: 1px solid #444;
     color: #ddd;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar {
+    border-bottom-color: #30363d;
+    background: rgba(22, 27, 34, 0.98);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 28px rgba(0, 0, 0, 0.32);
+    color: #d6dee7;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .fh-viewbar-title,
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .fh-viewbar-group,
+html.fh-jf body.theme-dark .fh-viewbar-actions > .x-settings,
+html.fh-jf body.theme-dark .fh-viewbar-actions > #toggleBtn,
+html.fh-jf body.theme-dark .fh-viewbar-actions > .xjf-btn {
+    border-color: #30363d;
+    background: #1f2630;
+    color: #c9d1d9;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .fh-viewbar-title {
+    border: 0;
+    background: transparent;
+    color: #d6dee7;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .fh-viewbar-title-divider {
+    color: #6b7280;
+}
+html.fh-jf body.theme-dark .fh-auto-mode-switch,
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .fh-omni-tools,
+html.fh-jf body.theme-dark .fh-json-search-box input {
+    border-color: #30363d;
+    background: #1f2630;
+    color: #c9d1d9;
+}
+html.fh-jf body.theme-dark .fh-json-search-box input:focus {
+    border-color: #5d8df5;
+    box-shadow: 0 0 0 2px rgba(93, 141, 245, 0.2);
+}
+html.fh-jf body.theme-dark .fh-json-search-count {
+    color: #a7b0c0;
+}
+html.fh-jf body.theme-dark .fh-search-trigger {
+    color: #9da7b3;
+}
+html.fh-jf body.theme-dark .fh-search-trigger.has-result strong {
+    color: #8fb1ff;
+}
+html.fh-jf body.theme-dark .fh-search-popover {
+    border-color: #30363d;
+    background: rgba(22, 27, 34, 0.98);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+html.fh-jf body.theme-dark .fh-node-actions {
+    border-left-color: #30363d;
+}
+html.fh-jf body.theme-dark .fh-search-trigger:hover,
+html.fh-jf body.theme-dark .fh-search-menu:focus-within .fh-search-trigger {
+    background: #30363d;
+    color: #f0f6fc;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar #fhJsonExcludeSite.is-excluded {
+    background: #14532d;
+    color: #dcfce7;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar #fhJsonExcludeSite.is-excluded:hover {
+    background: #166534;
+    color: #f0fdf4;
+}
+html.fh-jf body.theme-dark .fh-auto-mode-switch button {
+    color: #c9d1d9;
+}
+html.fh-jf body.theme-dark .fh-auto-mode-switch button:hover {
+    background: #30363d;
+    color: #f0f6fc;
+}
+html.fh-jf body.theme-dark .fh-auto-mode-switch button.selected {
+    background: #5d8df5;
+    color: #fff;
+}
+html.fh-jf body.theme-dark .fh-sort-trigger {
+    color: #9da7b3;
+}
+html.fh-jf body.theme-dark .fh-sort-trigger strong {
+    color: #8fb1ff;
+}
+html.fh-jf body.theme-dark .fh-sort-options {
+    border-color: #30363d;
+    background: rgba(22, 27, 34, 0.98);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+}
+html.fh-jf body.theme-dark .fh-sort-trigger:hover,
+html.fh-jf body.theme-dark .fh-sort-menu:focus-within .fh-sort-trigger,
+html.fh-jf body.theme-dark .fh-radio-pill:hover span,
+html.fh-jf body.theme-dark .fh-toggle-pill:hover span,
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .xjf-btn:hover {
+    background: #30363d;
+    color: #f0f6fc;
+}
+html.fh-jf body.theme-dark .fh-viewbar-actions > .x-donate-link {
+    border-color: #22543d;
+    background: #10291f;
+    color: #7ee2ac;
+}
+html.fh-jf body.theme-dark .fh-viewbar-actions > .x-donate-link a {
+    color: inherit;
+}
+html.fh-jf body.theme-dark .fh-viewbar-actions .nav-icon {
+    background: #164832;
+    color: #9af0bc;
+}
+html.fh-jf body.theme-dark .fh-viewbar-actions > .x-other-tools {
+    border-color: #25456f;
+    background: #14253f;
+    color: #9cc8ff;
+}
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar.t-collapse {
+    border-color: #30363d;
+    background: rgba(22, 27, 34, 0.98);
+}
+
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > #toggleBtn {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: #9cc8ff;
+}
+
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar.t-collapse .fh-viewbar-actions > .fh-collapse-icon {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+}
+
+html.fh-jf body.theme-dark {
+    --fh-bg: #151922;
+    --fh-surface: #1d2430;
+    --fh-surface-soft: #222b38;
+    --fh-line: #354052;
+    --fh-line-soft: #2d3747;
+    --fh-text: #e7ebf2;
+    --fh-muted: #a7b0c0;
+    --fh-faint: #7d8797;
+    --fh-accent: #5d8df5;
+    --fh-accent-strong: #8ab0ff;
+    --fh-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
+    background: var(--fh-bg);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar {
+    border-bottom-color: var(--fh-line-soft);
+    background: rgba(29, 36, 48, 0.96);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .x-toolbar.fh-json-viewbar .mod-setting-panel {
+    border-color: var(--fh-line);
+    background: var(--fh-surface);
+    box-shadow: var(--fh-shadow);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel h4 {
+    border-bottom-color: var(--fh-line);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .setting-section-title {
+    color: var(--fh-muted);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel label,
+html.fh-jf body.theme-dark .mod-setting-panel li {
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel li:hover {
+    color: var(--fh-accent-strong);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel input[type="checkbox"],
+html.fh-jf body.theme-dark .mod-setting-panel input[type="radio"] {
+    accent-color: var(--fh-accent);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel input[name="maxlength"] {
+    border-color: var(--fh-line);
+    background: #171d27;
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .xjf-btn {
+    border: 1px solid var(--fh-line);
+    background: var(--fh-surface-soft);
+    box-shadow: none;
+    color: var(--fh-text);
+    text-shadow: none;
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .xjf-btn:hover {
+    border-color: var(--fh-accent);
+    background: #273244;
+    color: #f0f6fc;
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .setting-support-link {
+    border-top-color: var(--fh-line);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .setting-donate-link {
+    color: var(--fh-accent-strong);
+    text-decoration-color: rgba(138, 176, 255, 0.46);
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .setting-donate-link:hover {
+    color: #b7ccff;
+    text-decoration-color: currentColor;
+}
+
+html.fh-jf body.theme-dark .mod-setting-panel .setting-donate-badge {
+    background: rgba(93, 141, 245, 0.18);
+    color: var(--fh-accent-strong);
+}
+
+html.fh-jf body.theme-dark #statusBar {
+    border-top-color: var(--fh-line);
+    background: var(--fh-surface);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .boxOpt {
+    border-color: var(--fh-line);
+    background: var(--fh-surface-soft);
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .boxOpt a {
+    color: var(--fh-text);
+}
+
+html.fh-jf body.theme-dark .boxOpt a:hover {
+    color: var(--fh-accent-strong);
 }
 
 /*================ 皮肤：theme-vscode ===================*/
@@ -1182,10 +2422,55 @@ html.fh-jf .theme-dark .x-other-tools {
     background: #f9f9f9;
 }
 .fh-jf .json-formatter-container {display: none;}
-.t-collapse .fe-feedback {
+.fh-raw-source-fallback {
+    margin: 12px;
+    border: 1px solid rgba(214, 222, 236, 0.96);
+    border-radius: 8px;
+    background: #ffffff;
+    color: #182134;
+    overflow: hidden;
+    box-shadow: none;
+}
+.fh-raw-source-fallback-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #e7ebf2;
+    background: #fbfcff;
+}
+.fh-raw-source-fallback-copy {
+    min-width: 0;
+}
+.fh-raw-source-fallback-head span {
+    color: #68748a;
+    font-size: 12px;
+    line-height: 1.6;
+}
+.fh-raw-source-fallback-meta {
+    flex: 0 0 auto;
+    padding-top: 1px;
+    color: #8b96a8 !important;
+    white-space: nowrap;
+}
+.fh-raw-source-fallback-pre {
+    max-height: 70vh;
+    margin: 0;
+    padding: 13px 14px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f8fafc;
+    color: #182134;
+    font-family: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+}
+.x-toolbar:not(.fh-json-viewbar).t-collapse .fe-feedback {
     height: 20px;
 }
-.t-collapse .fe-feedback #toggleBtn{
+.x-toolbar:not(.fh-json-viewbar).t-collapse .fe-feedback #toggleBtn{
     padding-bottom: 20px;
 }
 

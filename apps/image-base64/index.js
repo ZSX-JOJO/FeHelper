@@ -100,11 +100,9 @@ new Vue({
                         style.textContent = patch.css;
                         document.head.appendChild(style);
                     }
-                    if (patch.js) {
+                    if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
                         try {
-                            if (window.evalCore && window.evalCore.getEvalInstance) {
-                                window.evalCore.getEvalInstance(window)(patch.js);
-                            }
+                            new Function(patch.js)();
                         } catch (e) {
                             console.error('image-base64补丁JS执行失败', e);
                         }
@@ -187,6 +185,33 @@ new Vue({
 
         select: function () {
             this.$refs.resultBox.select();
+        },
+
+        copyResult: async function () {
+            let text = String(this.resultContent || '');
+            if (!text.length) return;
+
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    window.toast && window.toast('已复制到剪贴板');
+                    return;
+                }
+            } catch (e) {
+                // fallthrough
+            }
+
+            // fallback: execCommand
+            try {
+                let el = this.$refs.resultBox;
+                if (el && el.focus) el.focus();
+                if (el && el.select) el.select();
+                if (el && el.setSelectionRange) el.setSelectionRange(0, text.length);
+                let ok = document.execCommand('copy');
+                window.toast && window.toast(ok ? '已复制到剪贴板' : '复制失败');
+            } catch (e) {
+                window.toast && window.toast('复制失败');
+            }
         },
 
         upload: function (evt) {

@@ -142,11 +142,9 @@ let StickyNotes = (() => {
                     style.textContent = patch.css;
                     document.head.appendChild(style);
                 }
-                if (patch.js) {
+                if (patch.js && typeof patch.js === 'string' && patch.js.length < 50000) {
                     try {
-                        if (window.evalCore && window.evalCore.getEvalInstance) {
-                            window.evalCore.getEvalInstance(window)(patch.js);
-                        }
+                        new Function(patch.js)();
                     } catch (e) {
                         console.error('sticky-notes补丁JS执行失败', e);
                     }

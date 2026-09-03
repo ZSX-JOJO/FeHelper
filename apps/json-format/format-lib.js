@@ -58,16 +58,17 @@ Date.prototype.format = function (pattern) {
  */
 window.toast = function (content) {
     window.clearTimeout(window.feHelperAlertMsgTid);
+    var safe = String(content).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     let elAlertMsg = document.querySelector("#fehelper_alertmsg");
     if (!elAlertMsg) {
         let elWrapper = document.createElement('div');
         elWrapper.innerHTML = '<div id="fehelper_alertmsg" style="position:fixed;bottom:25px;left:5px;z-index:1000000">' +
             '<p style="background:#000;display:inline-block;color:#fff;text-align:center;' +
-            'padding:10px 10px;margin:0 auto;font-size:14px;border-radius:4px;">' + content + '</p></div>';
+            'padding:10px 10px;margin:0 auto;font-size:14px;border-radius:4px;">' + safe + '</p></div>';
         elAlertMsg = elWrapper.childNodes[0];
         document.body.appendChild(elAlertMsg);
     } else {
-        elAlertMsg.querySelector('p').innerHTML = content;
+        elAlertMsg.querySelector('p').innerHTML = safe;
         elAlertMsg.style.display = 'block';
     }
 
@@ -94,6 +95,13 @@ window.Formatter = (function () {
 
     let lastItemIdGiven = 0;
     let cachedJsonString = '';
+    let cachedJsonValue = null;
+    const RAW_PARSE_FALLBACK_PREVIEW_LIMIT = 120000;
+    const LARGE_JSON_TEXT_THRESHOLD = 600000;
+    let plainJsonViewEnabled = false;
+    let largeJsonPlainViewEnabled = false;
+    let prettyJsonSelectionActive = false;
+    let prettyJsonShortcutBound = false;
     
     // 单例Worker实例
     let workerInstance = null;
@@ -101,6 +109,192 @@ window.Formatter = (function () {
     let cspRestricted = false;
     // 转义功能开启标记
     let escapeJsonStringEnabled = false;
+    // 状态栏与节点操作入口是否启用，手动格式化页默认保留旧行为
+    let statusBarEnabled = true;
+    let jsonSearchState = {
+        query: '',
+        matches: [],
+        index: -1
+    };
+    let jsonSearchIndex = null;
+
+    let _clearOptionBar = function () {
+        try {
+            $('#optionBar').html('').hide();
+        } catch (e) {
+        }
+    };
+
+    let sanitizeJsonDownloadFilename = function(note, fallbackPrefix, maxLength) {
+        let fallback = fallbackPrefix || 'FeHelper';
+        let value = String(note || '')
+            .trim()
+            .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_')
+            .replace(/\s+/g, '_')
+            .replace(/_{2,}/g, '_')
+            .replace(/^[._\-\s]+|[._\-\s]+$/g, '');
+
+        if (!value) {
+            value = fallback;
+        }
+
+        let limit = Math.max(12, Number(maxLength) || 64);
+        if (value.length > limit) {
+            value = value.slice(0, limit).replace(/[._\-\s]+$/g, '');
+        }
+        return value || fallback;
+    };
+
+    let getJsonDownloadBasename = function() {
+        let dt = (new Date()).format('yyyyMMddHHmmss');
+        let note = '';
+        try {
+            note = window.__fhJsonWindowNote || '';
+        } catch (e) {
+            note = '';
+        }
+        return sanitizeJsonDownloadFilename(note, 'FeHelper-' + dt, 64);
+    };
+
+    let _canRenderFormattedResult = function () {
+        try {
+            if (window.__fhJsonResultActionsEnabled === false) {
+                return false;
+            }
+            let pageContainer = document.querySelector('#pageContainer');
+            if (pageContainer && pageContainer.__vue__ && pageContainer.__vue__.errorMsg) {
+                return false;
+            }
+        } catch (e) {
+        }
+        return true;
+    };
+
+    let _hasPrettyJsonResult = function () {
+        return _canRenderFormattedResult() && !!cachedJsonString;
+    };
+
+    let _isEditableShortcutTarget = function (target) {
+        if (!target || target === document || target === window) return false;
+        let el = target.nodeType === 1 ? target : target.parentElement;
+        if (!el) return false;
+        if (el.isContentEditable) return true;
+        let tagName = (el.tagName || '').toLowerCase();
+        if (/^(input|textarea|select)$/i.test(tagName)) return true;
+        return !!(el.closest && el.closest('input, textarea, select, [contenteditable="true"], .CodeMirror, .cm-editor, .cm-content'));
+    };
+
+    let _updatePlainJsonControls = function () {
+        let optionBar = $('#optionBar');
+        optionBar.find('.fh-json-meta-toggle').text(plainJsonViewEnabled ? 'JSON视图' : '元数据');
+    };
+
+    let _exitPrettyJsonSelection = function () {
+        prettyJsonSelectionActive = false;
+        _setPlainJsonView(false);
+        if (window.getSelection) {
+            let selection = window.getSelection();
+            selection && selection.removeAllRanges && selection.removeAllRanges();
+        }
+        jfStatusBar && jfStatusBar.hide();
+    };
+
+    let _setPlainJsonView = function (enabled) {
+        if (largeJsonPlainViewEnabled && !enabled) {
+            enabled = true;
+        }
+        plainJsonViewEnabled = !!enabled;
+        if (!jfPre || !jfContent) {
+            _updatePlainJsonControls();
+            return;
+        }
+        if (plainJsonViewEnabled) {
+            jfPre.show();
+            jfContent.hide();
+        } else {
+            jfPre.hide();
+            jfContent.show();
+        }
+        _updatePlainJsonControls();
+    };
+
+    let _selectPrettyJsonText = function () {
+        if (!_hasPrettyJsonResult()) return false;
+        jfPre.html(htmlspecialchars(cachedJsonString));
+        _setPlainJsonView(true);
+        let preEl = jfPre[0];
+        if (!preEl || !window.getSelection || !document.createRange) return false;
+        let selection = window.getSelection();
+        let range = document.createRange();
+        range.selectNodeContents(preEl);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        prettyJsonSelectionActive = true;
+        return true;
+    };
+
+    let _copyPrettyJsonSelection = function (event) {
+        if (!prettyJsonSelectionActive || !_hasPrettyJsonResult()) return false;
+        if (event && event.clipboardData && event.clipboardData.setData) {
+            event.preventDefault();
+            event.clipboardData.setData('text/plain', cachedJsonString);
+            toast('格式化后的 JSON 全文已复制到剪贴板！');
+            return true;
+        }
+        _copyToClipboard(cachedJsonString, '格式化后的 JSON 全文已复制到剪贴板！');
+        return true;
+    };
+
+    let _bindPrettyJsonShortcuts = function () {
+        if (prettyJsonShortcutBound || !document.addEventListener) return;
+        prettyJsonShortcutBound = true;
+        document.addEventListener('keydown', function (event) {
+            let key = String(event.key || '').toLowerCase();
+            if (key === 'escape' && (plainJsonViewEnabled || prettyJsonSelectionActive) && _hasPrettyJsonResult()) {
+                event.preventDefault();
+                event.stopPropagation();
+                _exitPrettyJsonSelection();
+                return;
+            }
+
+            let isShortcut = event.ctrlKey || event.metaKey;
+            if (!isShortcut || event.altKey || event.shiftKey) return;
+
+            if (key === 'a') {
+                if (_isEditableShortcutTarget(event.target) || !_hasPrettyJsonResult()) {
+                    prettyJsonSelectionActive = false;
+                    return;
+                }
+                if (_selectPrettyJsonText()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                return;
+            }
+
+            if (key === 'c') {
+                if (prettyJsonSelectionActive && _hasPrettyJsonResult()) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    prettyJsonSelectionActive = false;
+                    _copyToClipboard(cachedJsonString, '格式化后的 JSON 全文已复制到剪贴板！');
+                    return;
+                }
+                if (_isEditableShortcutTarget(event.target)) {
+                    prettyJsonSelectionActive = false;
+                }
+                return;
+            }
+
+            prettyJsonSelectionActive = false;
+        }, true);
+        document.addEventListener('copy', function (event) {
+            _copyPrettyJsonSelection(event);
+        }, true);
+        document.addEventListener('mousedown', function () {
+            prettyJsonSelectionActive = false;
+        }, true);
+    };
 
     let _initElements = function () {
 
@@ -124,7 +318,11 @@ window.Formatter = (function () {
             formattingMsg = $('<div id="formattingMsg"><span class="x-loading"></span>格式化中...</div>').appendTo('body');
         }
 
+        _bindPrettyJsonShortcuts();
+
         try {
+            jsonSearchIndex = null;
+            largeJsonPlainViewEnabled = false;
             jfContent.html('').show();
             jfPre.html('').hide();
             jfStatusBar && jfStatusBar.hide();
@@ -154,12 +352,17 @@ window.Formatter = (function () {
      * @private
      */
     let _downloadSupport = function (content) {
+        if (!_canRenderFormattedResult()) {
+            _clearOptionBar();
+            return;
+        }
 
         // 下载链接
-        let dt = (new Date()).format('yyyyMMddHHmmss');
-        let blob = new Blob([content], {type: 'application/octet-stream'});
+        let filename = getJsonDownloadBasename();
+        let safeContent = String(content || '').replace(/"__FH_PRESERVE_INTEGER_KEY__(\d+)":/g, '"$1":');
+        let blob = new Blob([safeContent], {type: 'application/octet-stream'});
 
-        let button = $('<button class="xjf-btn xjf-btn-right">下载JSON</button>').appendTo('#optionBar');
+        let button = $('<button class="xjf-btn xjf-btn-right">下载</button>').appendTo('#optionBar');
 
         // 检查是否在沙盒化iframe中
         function isSandboxed() {
@@ -193,7 +396,7 @@ window.Formatter = (function () {
                 font-family: Arial, sans-serif;
             `;
             downloadInfo.innerHTML = `
-                <div style="color: #1976d2; font-weight: bold; margin-bottom: 8px;">📋 沙盒模式 - JSON内容</div>
+                <div style="color: #1976d2; font-weight: bold; margin-bottom: 8px;">沙盒模式 - JSON内容</div>
                 <div style="color: #666; font-size: 14px; margin-bottom: 10px;">由于浏览器安全限制，无法直接下载。请复制以下内容并保存为 .json 文件：</div>
                 <button onclick="
                     let textarea = this.parentElement.nextElementSibling;
@@ -225,7 +428,7 @@ window.Formatter = (function () {
                 box-sizing: border-box;
                 background: #f8f9fa;
             `;
-            textarea.value = content;
+            textarea.value = safeContent;
             textarea.readOnly = true;
             
             // 将内容添加到 #formattedJson 节点
@@ -274,7 +477,7 @@ window.Formatter = (function () {
                         border-radius: 4px;
                         resize: vertical;
                         box-sizing: border-box;
-                    ">${content}</textarea>
+                    ">${htmlspecialchars(safeContent)}</textarea>
                     <div style="margin-top: 15px; text-align: right;">
                         <button onclick="this.closest('div').parentElement.remove()" style="
                             background: #6c757d;
@@ -317,7 +520,7 @@ window.Formatter = (function () {
         function tryDownload() {
             try {
                 let aLink = document.createElement('a');
-                aLink.download = 'FeHelper-' + dt + '.json';
+                aLink.download = filename + '.json';
                 aLink.href = URL.createObjectURL(blob);
                 aLink.style.display = 'none';
                 
@@ -356,7 +559,7 @@ window.Formatter = (function () {
                         url: URL.createObjectURL(blob),
                         saveAs: true,
                         conflictAction: 'overwrite',
-                        filename: 'FeHelper-' + dt + '.json'
+                        filename: filename + '.json'
                     }, (downloadId) => {
                         if (chrome.runtime.lastError) {
                             console.error('Chrome下载失败:', chrome.runtime.lastError);
@@ -384,7 +587,7 @@ window.Formatter = (function () {
      * chrome 下复制到剪贴板
      * @param text
      */
-    let _copyToClipboard = function (text) {
+    let _copyToClipboard = function (text, successMsg) {
         let input = document.createElement('textarea');
         input.style.position = 'fixed';
         input.style.opacity = 0;
@@ -394,7 +597,7 @@ window.Formatter = (function () {
         document.execCommand('Copy');
         document.body.removeChild(input);
 
-        toast('Json片段复制成功，随处粘贴可用！')
+        toast(successMsg || 'Json片段复制成功，随处粘贴可用！')
     };
 
 
@@ -404,24 +607,37 @@ window.Formatter = (function () {
      * @returns {string}
      */
     let getJsonText = function (el) {
+        if (cachedJsonValue !== null) {
+            try {
+                let txt = _stringifyJsonNodeValue(el);
+                if (txt !== undefined && txt !== '') {
+                    return txt;
+                }
+            } catch (e) {
+            }
+        }
 
-        let txt = el.text().replace(/复制\|下载\|删除/gm,'').replace(/":\s/gm, '":').replace(/,$/, '').trim();
+        let txt = el.clone().children('.boxOpt').remove().end().text()
+            .replace(/复制路径\|复制\|下载\|删除/gm,'')
+            .replace(/复制\|下载\|删除/gm,'')
+            .replace(/":\s/gm, '":')
+            .replace(/,$/, '')
+            .trim();
         if (!(/^{/.test(txt) && /\}$/.test(txt)) && !(/^\[/.test(txt) && /\]$/.test(txt))) {
             txt = '{' + txt + '}';
         }
         try {
-            txt = JSON.stringify(JSON.parse(txt), null, 4);
+            txt = _safeStringify(JSON.parse(txt), 4);
         } catch (err) {
         }
 
         return txt;
     };
 
-    // 添加json路径
-    let _showJsonPath = function (curEl) {
+    let _getJsonPathKeys = function (curEl) {
         let keys = [];
         let current = curEl;
-        
+
         // 处理当前节点
         if (current.hasClass('item') && !current.hasClass('rootItem')) {
             if (current.hasClass('item-array-element')) {
@@ -482,8 +698,17 @@ window.Formatter = (function () {
         });
 
         // 过滤掉空值和无效的key
-        let validKeys = keys.filter(key => key && key.trim() !== '');
-        
+        return keys.filter(key => key && key.trim() !== '');
+    };
+
+    let _getJsonPathForElement = function (curEl, language) {
+        return _formatJsonPath(_getJsonPathKeys(curEl), language || 'javascript');
+    };
+
+    // 添加json路径
+    let _showJsonPath = function (curEl) {
+        let validKeys = _getJsonPathKeys(curEl);
+
         // 创建或获取语言选择器和路径显示区域
         let jfPathContainer = $('#jsonPathContainer');
         if (!jfPathContainer.length) {
@@ -503,6 +728,7 @@ window.Formatter = (function () {
             
             // 创建路径显示区域
             let jfPath = $('<span id="jsonPath"/>').appendTo(jfPathContainer);
+            $('<span id="jsonSelectionMeta"/>').appendTo(jfPathContainer);
             
             // 绑定语言切换事件
             langSelector.on('change', function() {
@@ -535,12 +761,21 @@ window.Formatter = (function () {
         // 获取当前选择的语言
         let selectedLang = $('#jsonPathLangSelector').val() || 'javascript';
         _updateJsonPath(validKeys, selectedLang);
+        _updateStatusBarSelectionInfo(curEl);
     };
 
     // 根据不同编程语言格式化JSON路径
     let _updateJsonPath = function(keys, language) {
         let path = _formatJsonPath(keys, language);
-        $('#jsonPath').html('当前节点：' + path);
+        $('#jsonPath').text('当前节点：' + path);
+    };
+
+    let _updateStatusBarSelectionInfo = function(curEl) {
+        let info = _getSelectionInfo(curEl);
+        let meta = (info.type || 'node') + (info.preview ? ' / ' + info.preview : '');
+        $('#jsonSelectionMeta')
+            .text(meta)
+            .attr('title', meta);
     };
 
     // 格式化JSON路径为不同编程语言格式
@@ -709,56 +944,9 @@ window.Formatter = (function () {
 
     // 给某个节点增加操作项
     let _addOptForItem = function (el, show) {
-
-        // 下载json片段
-        let fnDownload = function (event) {
-            event.stopPropagation();
-
-            let txt = getJsonText(el);
-            // 下载片段
-            let dt = (new Date()).format('yyyyMMddHHmmss');
-            let blob = new Blob([txt], {type: 'application/octet-stream'});
-
-            if (typeof chrome === 'undefined' || !chrome.permissions) {
-                // 下载JSON的简单形式
-                $(this).attr('download', 'FeHelper-' + dt + '.json').attr('href', URL.createObjectURL(blob));
-            } else {
-                // 请求权限
-                chrome.permissions.request({
-                    permissions: ['downloads']
-                }, (granted) => {
-                    if (granted) {
-                        chrome.downloads.download({
-                            url: URL.createObjectURL(blob),
-                            saveAs: true,
-                            conflictAction: 'overwrite',
-                            filename: 'FeHelper-' + dt + '.json'
-                        });
-                    } else {
-                        toast('必须接受授权，才能正常下载！');
-                    }
-                });
-            }
-
-        };
-
-        // 复制json片段
-        let fnCopy = function (event) {
-            event.stopPropagation();
-            _copyToClipboard(getJsonText(el));
-        };
-
-        // 删除json片段
-        let fnDel = function (event) {
-            event.stopPropagation();
-            if (el.parent().is('#formattedJson')) {
-                toast('如果连最外层的Json也删掉的话，就没啥意义了哦！');
-                return false;
-            }
-            toast('节点已删除成功！');
-            el.remove();
-            jfStatusBar && jfStatusBar.hide();
-        };
+        if (!statusBarEnabled) {
+            show = false;
+        }
 
         $('.boxOpt').hide();
         if (show) {
@@ -766,17 +954,114 @@ window.Formatter = (function () {
             if (!jfOptEl.length) {
                 jfOptEl = $('<b class="boxOpt">' +
                     '<a class="opt-copy" title="复制当前选中节点的JSON数据">复制</a>|' +
+                    '<a class="opt-path" title="复制当前选中节点的 JSONPath">复制路径</a>|' +
                     '<a class="opt-download" target="_blank" title="下载当前选中节点的JSON数据">下载</a>|' +
                     '<a class="opt-del" title="删除当前选中节点的JSON数据">删除</a></b>').appendTo(el);
             } else {
                 jfOptEl.show();
             }
-
-            jfOptEl.find('a.opt-download').unbind('click').bind('click', fnDownload);
-            jfOptEl.find('a.opt-copy').unbind('click').bind('click', fnCopy);
-            jfOptEl.find('a.opt-del').unbind('click').bind('click', fnDel);
         }
 
+    };
+
+    let _handleNodeOptionClick = function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        let action = $(event.target);
+        let el = action.closest('.item');
+        if (!el.length) return;
+
+        if (action.hasClass('opt-copy')) {
+            _copyToClipboard(getJsonText(el));
+            return;
+        }
+
+        if (action.hasClass('opt-path')) {
+            let info = _getSelectionInfo(el);
+            if (!info.path) {
+                toast('未找到当前节点路径！');
+                return;
+            }
+            _copyToClipboard(info.path, '当前节点 JSONPath 已复制！');
+            return;
+        }
+
+        if (action.hasClass('opt-del')) {
+            if (el.parent().is('#formattedJson')) {
+                toast('如果连最外层的Json也删掉的话，就没啥意义了哦！');
+                return false;
+            }
+            let arrayContainer = el.hasClass('item-array-element')
+                ? el.parent('.item-array-container')
+                : null;
+            let utils = window.FHJsonAutoUtils || {};
+            if (
+                cachedJsonValue !== null &&
+                typeof utils.deletePreservedValueAtPath === 'function' &&
+                utils.deletePreservedValueAtPath(cachedJsonValue, _getJsonPathKeys(el))
+            ) {
+                cachedJsonString = _safeStringify(cachedJsonValue, 4);
+                jfPre.text(cachedJsonString);
+            }
+            toast('节点已删除成功！');
+            el.remove();
+            if (
+                arrayContainer && arrayContainer.length &&
+                typeof utils.reindexArrayElementNodes === 'function'
+            ) {
+                utils.reindexArrayElementNodes(
+                    arrayContainer.children('.item-array-element').toArray(),
+                    document
+                );
+            }
+            jsonSearchIndex = null;
+            jfStatusBar && jfStatusBar.hide();
+            return;
+        }
+
+        if (action.hasClass('opt-download')) {
+            let txt = '';
+            try {
+                txt = _stringifyJsonNodeValue(el);
+            } catch (e) {
+                txt = getJsonText(el);
+            }
+            let blob = new Blob([txt], {type: 'application/octet-stream'});
+            let filename = getJsonDownloadBasename();
+
+            if (typeof chrome === 'undefined' || !chrome.permissions) {
+                let utils = window.FHJsonAutoUtils || {};
+                if (typeof utils.downloadJsonBlobWithAnchor === 'function') {
+                    utils.downloadJsonBlobWithAnchor(blob, filename + '.json');
+                } else {
+                    let link = document.createElement('a');
+                    link.download = filename + '.json';
+                    link.href = URL.createObjectURL(blob);
+                    link.style.display = 'none';
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(link.href);
+                }
+                return;
+            }
+
+            chrome.permissions.request({
+                permissions: ['downloads']
+            }, (granted) => {
+                if (granted) {
+                    chrome.downloads.download({
+                        url: URL.createObjectURL(blob),
+                        saveAs: true,
+                        conflictAction: 'overwrite',
+                        filename: filename + '.json'
+                    });
+                } else {
+                    toast('必须接受授权，才能正常下载！');
+                }
+            });
+        }
     };
 
     // 显示当前节点的Key
@@ -787,12 +1072,340 @@ window.Formatter = (function () {
 
         if (!show) {
             jfStatusBar.hide();
+            $('body').addClass('hide-status-bar');
             return;
         } else {
+            $('body').removeClass('hide-status-bar');
             jfStatusBar.show();
         }
 
         _showJsonPath(curEl);
+    };
+
+    let _syncStatusBarEnabled = function (enabled) {
+        statusBarEnabled = enabled !== false;
+
+        if (!statusBarEnabled) {
+            $('.boxOpt').hide();
+            let selected = $('#jfContent .item.x-selected').first();
+            if (selected.length) {
+                _toogleStatusBar(selected, true);
+            } else {
+                jfStatusBar && jfStatusBar.hide();
+                $('body').addClass('hide-status-bar');
+            }
+            return;
+        }
+
+        let selected = $('#jfContent .item.x-selected').first();
+        if (!selected.length) {
+            selected = $('#jfContent .item').first();
+        }
+        if (!selected.length) {
+            return;
+        }
+
+        _selectJsonElement(selected, {scroll: false});
+    };
+
+    let _getSelectedJsonElement = function () {
+        let selected = $('#jfContent .item.x-selected').first();
+        if (!selected.length) {
+            selected = $('#jfContent .item').first();
+        }
+        return selected;
+    };
+
+    let _getExplicitSelectedJsonElement = function () {
+        return $('#jfContent .item.x-selected').first();
+    };
+
+    let _getDirectNodeText = function (el) {
+        let directText = el.children('.key,.string,.number,.bool,.null').map(function () {
+            return $(this).text();
+        }).get().join(' ');
+
+        if (!directText) {
+            directText = el.clone().children('.kv-list,.boxOpt').remove().end().text();
+        }
+
+        return String(directText || '').replace(/\s+/g, ' ').trim();
+    };
+
+    let _getJsonNodeType = function (el, text) {
+        if (!el || !el.length) {
+            return 'root';
+        }
+        if (el.hasClass('item-array') || el.children('.brace').first().text() === '[') {
+            return 'array';
+        }
+        if (el.hasClass('item-object') || el.children('.brace').first().text() === '{') {
+            return 'object';
+        }
+        if (el.children('.string').length) {
+            return 'string';
+        }
+        if (el.children('.number').length) {
+            return 'number';
+        }
+        if (el.children('.bool').length) {
+            return 'boolean';
+        }
+        if (el.children('.null').length) {
+            return 'null';
+        }
+
+        try {
+            let parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+                return 'array';
+            }
+            if (parsed === null) {
+                return 'null';
+            }
+            return typeof parsed;
+        } catch (e) {
+            return 'node';
+        }
+    };
+
+    let _getJsonValueByKeys = function (keys) {
+        let value = cachedJsonValue !== null ? cachedJsonValue : JSON.parse(cachedJsonString);
+        let utils = window.FHJsonAutoUtils || {};
+        if (typeof utils.getPreservedValueAtPath === 'function') {
+            return utils.getPreservedValueAtPath(value, keys);
+        }
+        keys.forEach(key => {
+            if (key.startsWith('[') && key.endsWith(']')) {
+                value = value[parseInt(key.slice(1, -1), 10)];
+                return;
+            }
+            if (value !== null && value !== undefined && Object.prototype.hasOwnProperty.call(value, key)) {
+                value = value[key];
+                return;
+            }
+            value = value && value['__FH_PRESERVE_INTEGER_KEY__' + key];
+        });
+        return value;
+    };
+
+    let _stringifyJsonNodeValue = function (el) {
+        if (!cachedJsonString) {
+            return getJsonText(el);
+        }
+
+        let value = _getJsonValueByKeys(_getJsonPathKeys(el));
+        let text = _safeStringify(value, 4);
+        return text === undefined ? '' : text;
+    };
+
+    let _getSelectionInfo = function (el) {
+        let selected = (el !== undefined && el !== null) ? el : _getSelectedJsonElement();
+        if (!selected.length) {
+            return {
+                selected: false,
+                path: '',
+                type: '',
+                preview: '',
+                text: ''
+            };
+        }
+
+        let path = _getJsonPathForElement(selected, 'javascript');
+        let text = '';
+        try {
+            text = _stringifyJsonNodeValue(selected);
+        } catch (e) {
+            try {
+                text = getJsonText(selected);
+            } catch (err) {
+                text = selected.text() || '';
+            }
+        }
+
+        let preview = _getDirectNodeText(selected) || text;
+        preview = String(preview || '').replace(/\s+/g, ' ').trim();
+        if (preview.length > 140) {
+            preview = preview.slice(0, 137) + '...';
+        }
+
+        return {
+            selected: true,
+            path: path,
+            type: _getJsonNodeType(selected, text),
+            preview: preview,
+            text: text
+        };
+    };
+
+    let _emitSelectionChange = function (el) {
+        try {
+            document.dispatchEvent(new CustomEvent('fh-json-selection-change', {
+                detail: _getSelectionInfo(el)
+            }));
+        } catch (e) {
+        }
+    };
+
+    let _emitFormatReady = function () {
+        try {
+            document.dispatchEvent(new CustomEvent('fh-json-format-ready', {
+                detail: _getSelectionInfo(_getSelectedJsonElement())
+            }));
+        } catch (e) {
+        }
+    };
+
+    let _selectJsonElement = function (el, opts) {
+        opts = opts || {};
+        let selected = el && el.length ? el : _getSelectedJsonElement();
+        if (!selected.length) {
+            return _getSelectionInfo(selected);
+        }
+
+        _setPlainJsonView(false);
+        selected.parents('.collapsed').removeClass('collapsed');
+        $('.x-selected').removeClass('x-selected');
+        selected.addClass('x-selected');
+
+        if (opts.scroll !== false && selected[0] && selected[0].scrollIntoView) {
+            selected[0].scrollIntoView({block: 'center', inline: 'nearest'});
+        }
+
+        _toogleStatusBar(selected, true);
+        _addOptForItem(selected, true);
+        let info = _getSelectionInfo(selected);
+        _emitSelectionChange(selected);
+        return info;
+    };
+
+    let _clearSelection = function () {
+        $('.x-selected').removeClass('x-selected');
+        $('.boxOpt').hide();
+        $('#jsonPath,#jsonSelectionMeta').text('').removeAttr('title');
+        jfStatusBar && jfStatusBar.hide();
+        $('body').addClass('hide-status-bar');
+        _emitSelectionChange($());
+        return _getSelectionInfo($());
+    };
+
+    let _clearJsonSearch = function () {
+        $('#jfContent .fh-json-search-match, #jfContent .fh-json-search-active').removeClass('fh-json-search-match fh-json-search-active');
+        jsonSearchState = {
+            query: '',
+            matches: [],
+            index: -1
+        };
+        return _getSearchResultState();
+    };
+
+    let _getSearchableNodeText = function (el) {
+        let selected = $(el);
+        let directText = _getDirectNodeText(selected);
+        let path = _getJsonPathForElement(selected, 'javascript');
+        return (path + ' ' + directText).toLowerCase();
+    };
+
+    let _getSearchResultState = function () {
+        return {
+            query: jsonSearchState.query,
+            total: jsonSearchState.matches.length,
+            current: jsonSearchState.index >= 0 ? jsonSearchState.index + 1 : 0,
+            disabled: largeJsonPlainViewEnabled,
+            reason: largeJsonPlainViewEnabled ? '大型 JSON 为完整文本视图，请使用浏览器查找' : ''
+        };
+    };
+
+    let _ensureJsonSearchIndex = function () {
+        if (jsonSearchIndex !== null) return jsonSearchIndex;
+        jsonSearchIndex = [];
+        jfContent.find('.item').each(function () {
+            jsonSearchIndex.push({
+                element: this,
+                text: _getSearchableNodeText(this),
+            });
+        });
+        return jsonSearchIndex;
+    };
+
+    let _selectSearchMatch = function (index) {
+        if (!jsonSearchState.matches.length) {
+            return _getSearchResultState();
+        }
+
+        let total = jsonSearchState.matches.length;
+        jsonSearchState.index = (index + total) % total;
+        $('#jfContent .fh-json-search-active').removeClass('fh-json-search-active');
+
+        let target = $(jsonSearchState.matches[jsonSearchState.index]);
+        target.addClass('fh-json-search-active');
+        _selectJsonElement(target);
+
+        return _getSearchResultState();
+    };
+
+    let _searchJsonNodes = function (query) {
+        query = String(query || '').trim();
+        _clearJsonSearch();
+
+        if (largeJsonPlainViewEnabled) {
+            jsonSearchState.query = query;
+            return _getSearchResultState();
+        }
+
+        if (!query) {
+            return _getSearchResultState();
+        }
+
+        let normalizedQuery = query.toLowerCase();
+        let matches = [];
+        _ensureJsonSearchIndex();
+        jsonSearchIndex.forEach(function (entry) {
+            if (entry.text.indexOf(normalizedQuery) > -1) {
+                matches.push(entry.element);
+            }
+        });
+
+        jsonSearchState.query = query;
+        jsonSearchState.matches = matches;
+        jsonSearchState.index = -1;
+        $(matches).addClass('fh-json-search-match');
+
+        if (matches.length) {
+            return _selectSearchMatch(0);
+        }
+
+        return _getSearchResultState();
+    };
+
+    let _nextJsonSearchMatch = function (delta) {
+        if (!jsonSearchState.matches.length) {
+            return _getSearchResultState();
+        }
+
+        return _selectSearchMatch(jsonSearchState.index + (delta || 1));
+    };
+
+    let _copySelectedPath = function () {
+        let selected = _getExplicitSelectedJsonElement();
+        if (!selected.length) {
+            toast('请先选中一个 JSON 节点。');
+            return _getSelectionInfo(selected);
+        }
+        let info = _getSelectionInfo(selected);
+        _copyToClipboard(info.path || '$', '当前 JSON Path 已复制到剪贴板！');
+        return info;
+    };
+
+    let _copySelectedValue = function () {
+        let selected = _getExplicitSelectedJsonElement();
+        if (!selected.length) {
+            toast('请先选中一个 JSON 节点。');
+            return _getSelectionInfo(selected);
+        }
+        let info = _getSelectionInfo(selected);
+        _copyToClipboard(info.text || getJsonText(selected), '当前节点 JSON 已复制到剪贴板！');
+        return info;
     };
 
 
@@ -823,65 +1436,91 @@ window.Formatter = (function () {
         });
     }
 
+    let _collapseAllJsonNodes = function () {
+        if (plainJsonViewEnabled) {
+            _setPlainJsonView(false);
+        }
+        collapse($('#jfContent .item-object, #jfContent .item-block'));
+        $('#optionBar .fh-json-collapse-toggle').text('展开');
+        jfStatusBar && jfStatusBar.hide();
+    };
+
+    let _expandAllJsonNodes = function () {
+        if (plainJsonViewEnabled) {
+            _setPlainJsonView(false);
+        }
+        $('.item-object,.item-block').removeClass('collapsed');
+        $('#optionBar .fh-json-collapse-toggle').text('折叠');
+        jfStatusBar && jfStatusBar.hide();
+    };
+
     /**
      * 创建几个全局操作的按钮，置于页面右上角即可
      * @private
      */
     let _buildOptionBar = function () {
+        if (!_canRenderFormattedResult()) {
+            _clearOptionBar();
+            return;
+        }
 
         let optionBar = $('#optionBar');
         if (optionBar.length) {
-            optionBar.html('');
+            optionBar.html('').show().addClass('fh-option-bar');
         } else {
-            optionBar = $('<span id="optionBar" />').appendTo(jfContent.parent());
+            optionBar = $('<span id="optionBar" class="fh-option-bar" />').appendTo(jfContent.parent());
         }
 
+        plainJsonViewEnabled = false;
+        prettyJsonSelectionActive = false;
+        jfPre.hide();
+        jfContent.show();
+
         $('<span class="x-split">|</span>').appendTo(optionBar);
-        let buttonFormatted = $('<button class="xjf-btn xjf-btn-left">元数据</button>').appendTo(optionBar);
-        let buttonCollapseAll = $('<button class="xjf-btn xjf-btn-mid">折叠所有</button>').appendTo(optionBar);
-        let plainOn = false;
+        let buttonFormatted = $('<button class="xjf-btn xjf-btn-left fh-json-meta-toggle">元数据</button>').appendTo(optionBar);
+        let buttonCollapseAll = $('<button class="xjf-btn xjf-btn-mid fh-json-collapse-toggle">折叠</button>').appendTo(optionBar);
+        let buttonCopyPlain = $('<button class="xjf-btn xjf-btn-mid fh-json-copy-plain" title="复制格式化后的 JSON 全文">复制</button>').appendTo(optionBar);
 
         buttonFormatted.bind('click', function (e) {
-            if (plainOn) {
-                plainOn = false;
-                jfPre.hide();
-                jfContent.show();
-                buttonFormatted.text('元数据');
-            } else {
-                plainOn = true;
-                jfPre.show();
-                jfContent.hide();
-                buttonFormatted.text('格式化');
-            }
+            e.preventDefault();
+            e.stopPropagation();
+            _setPlainJsonView(!plainJsonViewEnabled);
 
             jfStatusBar && jfStatusBar.hide();
+        });
+
+        buttonCopyPlain.bind('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!cachedJsonString) {
+                toast('暂无可复制的格式化结果，请先执行格式化。');
+                return;
+            }
+            _copyToClipboard(cachedJsonString, '格式化后的 JSON 全文已复制到剪贴板！');
         });
 
         buttonCollapseAll.bind('click', function (e) {
-            // 如果内容还没有格式化过，需要再格式化一下
-            if (plainOn) {
-                buttonFormatted.trigger('click');
+            if (plainJsonViewEnabled) {
+                _setPlainJsonView(false);
             }
 
-            if (buttonCollapseAll.text() === '折叠所有') {
-                buttonCollapseAll.text('展开所有');
-                // 递归折叠所有层级的对象和数组，确保所有内容都被折叠
-                collapse($('#jfContent .item-object, #jfContent .item-block'));
+            if (buttonCollapseAll.text() === '折叠') {
+                _collapseAllJsonNodes();
             } else {
-                buttonCollapseAll.text('折叠所有');
-                // 展开所有内容
-                $('.item-object,.item-block').removeClass('collapsed');
+                _expandAllJsonNodes();
             }
-            jfStatusBar && jfStatusBar.hide();
         });
+
+        _updatePlainJsonControls();
 
     };
 
     // 附加操作
     let _addEvents = function () {
+        jfContent.off('.fhJsonTree');
 
         // 折叠、展开
-        $('#jfContent span.expand').bind('click', function (ev) {
+        jfContent.on('click.fhJsonTree', 'span.expand', function (ev) {
             ev.preventDefault();
             ev.stopPropagation();
 
@@ -893,8 +1532,10 @@ window.Formatter = (function () {
             }
         });
 
+        jfContent.on('click.fhJsonTree', '.boxOpt a', _handleNodeOptionClick);
+
         // 点击选中：高亮
-        $('#jfContent .item').bind('click', function (e) {
+        jfContent.on('click.fhJsonTree', '.item', function (e) {
 
             let el = $(this);
 
@@ -902,21 +1543,15 @@ window.Formatter = (function () {
                 _toogleStatusBar(el, false);
                 _addOptForItem(el, false);
                 el.removeClass('x-selected');
+                _emitSelectionChange($());
                 e.stopPropagation();
                 return true;
             }
 
-            $('.x-selected').removeClass('x-selected');
-            el.addClass('x-selected');
-
-            // 显示底部状态栏
-            _toogleStatusBar(el, true);
-            _addOptForItem(el, true);
+            _selectJsonElement(el, {scroll: false});
 
             if (!$(e.target).is('.item .expand')) {
                 e.stopPropagation();
-            } else {
-                $(e.target).parent().trigger('click');
             }
 
             // 触发钩子
@@ -928,7 +1563,7 @@ window.Formatter = (function () {
         // 行悬停效果：只高亮当前直接悬停的item，避免嵌套冒泡
         let currentHoverElement = null;
         
-        $('#jfContent .item').bind('mouseenter', function (e) {
+        jfContent.on('mouseenter.fhJsonTree', '.item', function (e) {
             // 只处理视觉效果，不触发任何其他逻辑
             
             // 清除之前的悬停样式
@@ -947,7 +1582,7 @@ window.Formatter = (function () {
             e.preventDefault();
         });
         
-        $('#jfContent .item').bind('mouseleave', function (e) {
+        jfContent.on('mouseleave.fhJsonTree', '.item', function (e) {
             // 只处理视觉效果，不触发任何其他逻辑
             let el = $(this);
             el.removeClass('fh-hover');
@@ -1132,6 +1767,63 @@ window.Formatter = (function () {
         }
     };
 
+    let _renderRawParseFallback = function(jsonStr, error) {
+        let raw = String(jsonStr || '');
+        let message = error && error.message ? error.message : '未知错误';
+        let totalLength = raw.length.toLocaleString('zh-CN');
+        let previewRaw = raw.length > RAW_PARSE_FALLBACK_PREVIEW_LIMIT
+            ? raw.slice(0, RAW_PARSE_FALLBACK_PREVIEW_LIMIT)
+            : raw;
+        let truncatedNote = raw.length > RAW_PARSE_FALLBACK_PREVIEW_LIMIT
+            ? '；当前仅预览前 ' + RAW_PARSE_FALLBACK_PREVIEW_LIMIT.toLocaleString('zh-CN') + ' 字符，完整原文可复制'
+            : '';
+        cachedJsonString = raw;
+        cachedJsonValue = null;
+        jfPre.html(htmlspecialchars(previewRaw));
+        jfContent.html(
+            '<section class="fh-raw-source-fallback" role="region" aria-label="原文预览">' +
+                '<div class="fh-raw-source-fallback-head">' +
+                    '<div class="fh-raw-source-fallback-copy">' +
+                        '<strong>原文预览</strong>' +
+                        '<span>JSON 解析失败，已保留原文：' + htmlspecialchars(message) + htmlspecialchars(truncatedNote) + '</span>' +
+                    '</div>' +
+                    '<span class="fh-raw-source-fallback-meta">' + totalLength + ' 字符</span>' +
+                '</div>' +
+                '<pre class="fh-raw-source-fallback-pre"><code>' + htmlspecialchars(previewRaw) + '</code></pre>' +
+            '</section>'
+        );
+    };
+
+    let _shouldUseLargeJsonPlainView = function(value, source) {
+        let utils = window.FHJsonAutoUtils || {};
+        if (typeof utils.shouldUsePlainJsonView === 'function') {
+            return utils.shouldUsePlainJsonView(value, String(source || '').length, {
+                characterLimit: LARGE_JSON_TEXT_THRESHOLD,
+                nodeLimit: 20000,
+            });
+        }
+        return String(source || '').length > LARGE_JSON_TEXT_THRESHOLD;
+    };
+
+    let _renderLargeJsonPlainView = function() {
+        if (!_canRenderFormattedResult()) {
+            _clearOptionBar();
+            return false;
+        }
+        formattingMsg.hide();
+        jfPre.text(cachedJsonString);
+        jfContent.empty();
+        _buildOptionBar();
+        _downloadSupport(cachedJsonString);
+        largeJsonPlainViewEnabled = true;
+        _clearJsonSearch();
+        _setPlainJsonView(true);
+        $('#optionBar .fh-json-meta-toggle, #optionBar .fh-json-collapse-toggle').hide();
+        $('<span class="fh-json-large-mode-note">大型 JSON 已切换为完整文本视图</span>').prependTo('#optionBar');
+        _emitFormatReady();
+        return true;
+    };
+
     /**
      * 执行代码格式化
      * 支持异步worker
@@ -1147,23 +1839,18 @@ window.Formatter = (function () {
         try {
             // 先验证JSON是否有效（使用与worker一致的BigInt安全解析）
             let parsedJson = _parseWithBigInt(jsonStr);
+            cachedJsonValue = parsedJson;
             // 使用replacer保证bigint与大数字不丢精度
-            cachedJsonString = JSON.stringify(parsedJson, function(key, value) {
-                if (typeof value === 'bigint') {
-                    return value.toString();
-                }
-                if (isBigNumberLike(value)) {
-                    return getBigNumberDisplayString(value);
-                }
-                if (typeof value === 'number' && value.toString().includes('e')) {
-                    return value.toLocaleString('fullwide', {useGrouping: false});
-                }
-                return value;
-            }, 4);
+            cachedJsonString = _safeStringify(parsedJson, 4);
             jfPre.html(htmlspecialchars(cachedJsonString));
         } catch (e) {
             console.error('JSON解析失败:', e);
-            jfContent.html(`<div class="error">JSON解析失败: ${e.message}</div>`);
+            _renderRawParseFallback(jsonStr, e);
+            return;
+        }
+
+        if (_shouldUseLargeJsonPlainView(cachedJsonValue, cachedJsonString)) {
+            _renderLargeJsonPlainView();
             return;
         }
 
@@ -1198,9 +1885,22 @@ window.Formatter = (function () {
                     let msg = evt.data;
                     switch (msg[0]) {
                         case 'FORMATTING':
+                            if (!_canRenderFormattedResult()) {
+                                _clearOptionBar();
+                                return;
+                            }
                             formattingMsg.show();
                             break;
                         case 'FORMATTED':
+                            if (!msg[1]) {
+                                formatSync(jsonStr, skin, escapeJsonString);
+                                return;
+                            }
+                            if (!_canRenderFormattedResult()) {
+                                formattingMsg.hide();
+                                _clearOptionBar();
+                                return;
+                            }
                             formattingMsg.hide();
                             jfContent.html(msg[1]);
                             _buildOptionBar();
@@ -1208,6 +1908,8 @@ window.Formatter = (function () {
                             _addEvents();
                             // 支持文件下载
                             _downloadSupport(cachedJsonString);
+                            _clearJsonSearch();
+                            _emitFormatReady();
                             break;
                     }
                 };
@@ -1240,6 +1942,10 @@ window.Formatter = (function () {
 
     // 同步的方式格式化
     let formatSync = function (jsonStr, skin, escapeJsonString) {
+        if (!_canRenderFormattedResult()) {
+            _clearOptionBar();
+            return;
+        }
         _initElements();
         
         // 设置转义功能标志
@@ -1253,22 +1959,17 @@ window.Formatter = (function () {
         try {
             // 先验证JSON是否有效（使用与worker一致的BigInt安全解析）
             let parsedJson = _parseWithBigInt(jsonStr);
-            cachedJsonString = JSON.stringify(parsedJson, function(key, value) {
-                if (typeof value === 'bigint') {
-                    return value.toString();
-                }
-                if (isBigNumberLike(value)) {
-                    return getBigNumberDisplayString(value);
-                }
-                if (typeof value === 'number' && value.toString().includes('e')) {
-                    return value.toLocaleString('fullwide', {useGrouping: false});
-                }
-                return value;
-            }, 4);
+            cachedJsonValue = parsedJson;
+            cachedJsonString = _safeStringify(parsedJson, 4);
             
-            // 设置原始JSON内容到jfPre（用于元数据按钮）
+            // 保留原始 JSON 内容，供旧 DOM 节点复用。
             jfPre.html(htmlspecialchars(cachedJsonString));
-            
+
+            if (_shouldUseLargeJsonPlainView(cachedJsonValue, cachedJsonString)) {
+                _renderLargeJsonPlainView();
+                return;
+            }
+
             // 使用完整的JSON美化功能
             let formattedHtml = formatJsonToHtml(parsedJson, skin);
             
@@ -1286,6 +1987,8 @@ window.Formatter = (function () {
             _addEvents();
             // 支持文件下载
             _downloadSupport(cachedJsonString);
+            _clearJsonSearch();
+            _emitFormatReady();
             
             return;
         } catch (e) {
@@ -1300,6 +2003,14 @@ window.Formatter = (function () {
     // 与 worker 保持一致的 BigInt 安全解析：
     // 1) 给可能的大整数加标记；2) 使用reviver还原为原生BigInt
     let _parseWithBigInt = function(text) {
+        if (
+            typeof window !== 'undefined' &&
+            window.FHJsonAutoUtils &&
+            typeof window.FHJsonAutoUtils.parseWithBigInt === 'function'
+        ) {
+            return window.FHJsonAutoUtils.parseWithBigInt(text);
+        }
+
         // 先解析JSON，然后在对象层面处理大整数
         // 这样可以避免在字符串内容中错误地匹配数字
         try {
@@ -1378,6 +2089,41 @@ window.Formatter = (function () {
         }
     };
 
+    let _safeStringify = function(value, space) {
+        if (
+            typeof window !== 'undefined' &&
+            window.FHJsonAutoUtils &&
+            typeof window.FHJsonAutoUtils.safeStringify === 'function'
+        ) {
+            return window.FHJsonAutoUtils.safeStringify(value, space);
+        }
+
+        let tagged = JSON.stringify(value, function(key, item) {
+            if (typeof item === 'bigint') {
+                return item.toString();
+            }
+            if (isBigNumberLike(item)) {
+                return getBigNumberDisplayString(item);
+            }
+            if (typeof item === 'number' && item.toString().includes('e')) {
+                return item.toLocaleString('fullwide', {useGrouping: false});
+            }
+            return item;
+        }, space);
+        return tagged.replace(/"__FH_PRESERVE_INTEGER_KEY__(\d+)":/g, '"$1":');
+    };
+
+    let _normalizePreservedKey = function(key) {
+        if (
+            typeof window !== 'undefined' &&
+            window.FHJsonAutoUtils &&
+            typeof window.FHJsonAutoUtils.normalizePreservedKey === 'function'
+        ) {
+            return window.FHJsonAutoUtils.normalizePreservedKey(key);
+        }
+        return key;
+    };
+
     // 工具函数：获取或创建唯一图片预览浮窗节点
     function getOrCreateImgPreview() {
         let $img = $('#fh-img-preview');
@@ -1392,6 +2138,11 @@ window.Formatter = (function () {
         return createNode(json).getHTML();
     }
 
+    function shouldWrapLongString(value) {
+        const text = String(value == null ? '' : value);
+        return text.length > 2048 || /[\r\n]/.test(text);
+    }
+
     // 创建节点 - 直接复用webworker中的完整逻辑
     function createNode(value) {
         let node = {
@@ -1402,10 +2153,13 @@ window.Formatter = (function () {
             getHTML: function() {
                 switch(this.type) {
                     case 'string':
+                        const wrapLongString = shouldWrapLongString(this.value);
+                        const lineClass = wrapLongString ? 'item item-line item-line-wrap' : 'item item-line';
+                        const stringClass = wrapLongString ? 'string string-long' : 'string';
                         // 判断原始字符串是否为URL
                         if (isUrl(this.value)) {
                             // 用JSON.stringify保证转义符显示，内容包裹在<a>里
-                            return '<div class="item item-line"><span class="string"><a href="'
+                            return '<div class="' + lineClass + '"><span class="' + stringClass + '"><a href="'
                                 + htmlspecialchars(this.value) + '" target="_blank" rel="noopener noreferrer" data-is-link="1" data-link-url="' + htmlspecialchars(this.value) + '">' 
                                 + htmlspecialchars(JSON.stringify(this.value)) + '</a></span></div>';
                         } else {
@@ -1429,7 +2183,7 @@ window.Formatter = (function () {
                                             nestedHTML = nestedHTML.replace(/^<div class="item[^"]*">/, '').replace(/<\/div>$/, '');
                                             // 返回格式化的JSON结构，但保持在外层的字符串容器中
                                             // 使用block显示，确保完全展开
-                                            return '<div class="item item-line"><span class="string">' + 
+                                            return '<div class="' + lineClass + '"><span class="' + stringClass + '">' +
                                                 '<span class="quote">"</span>' +
                                                 '<div class="string-json-nested" style="display:block;margin-left:0;padding-left:0;">' +
                                                 nestedHTML +
@@ -1442,7 +2196,7 @@ window.Formatter = (function () {
                                     }
                                 }
                             }
-                            return '<div class="item item-line"><span class="string">' + formatStringValue(JSON.stringify(this.value)) + '</span></div>';
+                            return '<div class="' + lineClass + '"><span class="' + stringClass + '">' + formatStringValue(JSON.stringify(this.value)) + '</span></div>';
                         }
                     case 'number':
                         // 确保大数字不使用科学计数法
@@ -1486,6 +2240,7 @@ window.Formatter = (function () {
                 let keys = Object.keys(this.value);
                 keys.forEach((key, index) => {
                     let prop = this.value[key];
+                    let displayKey = _normalizePreservedKey(key);
                     let childNode = createNode(prop);
                     // 判断子节点是否为对象或数组，决定是否加item-block
                     let itemClass = (childNode.type === 'object' || childNode.type === 'array') ? 'item item-block' : 'item';
@@ -1495,14 +2250,14 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                     }
                     html += '<span class="quote">"</span>' +
-                        '<span class="key">' + htmlspecialchars(key) + '</span>' +
+                        '<span class="key">' + htmlspecialchars(displayKey) + '</span>' +
                         '<span class="quote">"</span>' +
                         '<span class="colon">: </span>';
                     // 添加值
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     // 如果不是最后一个属性，添加逗号
                     if (index < keys.length - 1) {
@@ -1536,7 +2291,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号
@@ -1586,6 +2341,7 @@ window.Formatter = (function () {
                 let keys = Object.keys(this.value);
                 keys.forEach((key, index) => {
                     let prop = this.value[key];
+                    let displayKey = _normalizePreservedKey(key);
                     let childNode = createNode(prop);
                     // 判断子节点是否为对象或数组，决定是否加item-block
                     let itemClass = (childNode.type === 'object' || childNode.type === 'array') ? 'item item-block' : 'item';
@@ -1594,13 +2350,13 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                     }
                     html += '<span class="quote">"</span>' +
-                        '<span class="key">' + htmlspecialchars(key) + '</span>' +
+                        '<span class="key">' + htmlspecialchars(displayKey) + '</span>' +
                         '<span class="quote">"</span>' +
                         '<span class="colon">: </span>';
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     if (index < keys.length - 1) {
                         html += '<span class="comma">,</span>';
@@ -1631,7 +2387,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号
@@ -1656,6 +2412,7 @@ window.Formatter = (function () {
                 let keys = Object.keys(this.value);
                 keys.forEach((key, index) => {
                     let prop = this.value[key];
+                    let displayKey = _normalizePreservedKey(key);
                     let childNode = createNode(prop);
                     // 判断子节点是否为对象或数组，决定是否加item-block
                     let itemClass = (childNode.type === 'object' || childNode.type === 'array') ? 'item item-block' : 'item';
@@ -1664,13 +2421,13 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                     }
                     html += '<span class="quote">"</span>' +
-                        '<span class="key">' + htmlspecialchars(key) + '</span>' +
+                        '<span class="key">' + htmlspecialchars(displayKey) + '</span>' +
                         '<span class="quote">"</span>' +
                         '<span class="colon">: </span>';
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     if (index < keys.length - 1) {
                         html += '<span class="comma">,</span>';
@@ -1700,7 +2457,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号
@@ -1856,6 +2613,58 @@ window.Formatter = (function () {
         formatSync: formatSync,
         setEscapeEnabled: function(enabled) {
             escapeJsonStringEnabled = enabled;
+        },
+        setStatusBarEnabled: function(enabled) {
+            _syncStatusBarEnabled(enabled);
+        },
+        search: function(query) {
+            return _searchJsonNodes(query);
+        },
+        nextSearch: function(delta) {
+            return _nextJsonSearchMatch(delta);
+        },
+        clearSearch: function() {
+            return _clearJsonSearch();
+        },
+        getSearchState: function() {
+            return _getSearchResultState();
+        },
+        getSelectionInfo: function() {
+            return _getSelectionInfo(_getExplicitSelectedJsonElement());
+        },
+        selectFirst: function() {
+            return _selectJsonElement(_getSelectedJsonElement());
+        },
+        clearSelection: function() {
+            return _clearSelection();
+        },
+        copySelectedPath: function() {
+            return _copySelectedPath();
+        },
+        copySelectedValue: function() {
+            return _copySelectedValue();
+        },
+        collapseAll: function() {
+            _collapseAllJsonNodes();
+            return _getSelectionInfo(_getExplicitSelectedJsonElement());
+        },
+        expandAll: function() {
+            _expandAllJsonNodes();
+            return _getSelectionInfo(_getExplicitSelectedJsonElement());
+        },
+        setPlainJsonView: function(enabled) {
+            _setPlainJsonView(!!enabled);
+            return {plain: plainJsonViewEnabled};
+        },
+        togglePlainJsonView: function(enabled) {
+            _setPlainJsonView(enabled === undefined ? !plainJsonViewEnabled : !!enabled);
+            return {plain: plainJsonViewEnabled};
+        },
+        isPlainJsonViewEnabled: function() {
+            return plainJsonViewEnabled;
+        },
+        isLargeJsonPlainViewEnabled: function() {
+            return largeJsonPlainViewEnabled;
         }
     }
 })();

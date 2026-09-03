@@ -3,13 +3,15 @@
     <head>
         <title>简易版Postman</title>
         <meta charset="UTF-8">
-        <link rel="shortcut icon" href="../static/img/favicon.ico">
-        <link rel="stylesheet" href="../static/vendor/jquery/jquery-ui.min.css">
-        <link rel="stylesheet" href="index.css" />
+	        <link rel="shortcut icon" href="../static/img/favicon.ico">
+	        <link rel="stylesheet" href="../static/vendor/jquery/jquery-ui.min.css">
+	        <link rel="stylesheet" href="index.css" />
+	        <link rel="stylesheet" href="../static/css/fh-ai-inline.css" />
+	    <link rel="stylesheet" href="../static/css/fehelper-tools.css">
         <script type="text/javascript" src="../static/vendor/evalCore.min.js"></script>
         <script type="text/javascript" src="../static/vendor/vue/vue.js"></script>
     </head>
-    <body class="theme-default">
+    <body class="theme-default fh-modern">
 
     <div class="wrapper" id="pageContainer">
         <div class="panel panel-default" style="margin-bottom: 0px;">
@@ -17,8 +19,8 @@
                 <h3 class="panel-title">
                     <a href="https://fehelper.com" target="_blank" class="x-a-high">
                         <img src="../static/img/fe-16.png" alt="fehelper"/> FeHelper</a>：简易版Postman
-                        <a href="#" class="x-donate-link" @click="openDonateModal($event)"><i class="nav-icon">❤&nbsp;</i>打赏鼓励</a>
-                        <a class="x-other-tools" @click="openOptionsPage($event)"><i class="icon-plus-circle"></i> 探索更多实用工具 <span class="tool-market-badge">工具市场</span></a>
+                        <a href="#" class="x-donate-link" @click="openDonateModal($event)"><i class="nav-icon">SP</i>请作者喝咖啡</a>
+                        <a class="x-other-tools" @click="openOptionsPage($event)"><i class="icon-plus-circle"></i> 工具市场</a>
                     </h3>
             </div>
         </div>
@@ -26,10 +28,10 @@
 
             <!-- Mock服务器状态提示 -->
             <div class="alert alert-info" style="margin-bottom: 15px; padding: 10px 15px; border-radius: 4px; background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460;">
-                <strong>🎉 本地Mock服务器已就绪！</strong> 
+                <strong>本地Mock服务器已就绪！</strong>
                 点击下方按钮快速体验本地POST请求测试，无需真实后端服务器。
                 <small style="display: block; margin-top: 5px; color: #6c757d;">
-                    💡 提示：Mock服务器基于Service Worker实现，支持JSON和表单数据格式
+                    提示：Mock服务器基于Service Worker实现，支持JSON和表单数据格式
                 </small>
             </div>
 
@@ -97,14 +99,35 @@
                     </div>
                 </div>
 
-                <div class="ui-mt-10">
-                    <input class="btn btn-success" type="button" value="发送请求" @click="postman()">
-                </div>
-            </div>
+	                <div class="ui-mt-10">
+	                    <input class="btn btn-success" type="button" value="发送请求" @click="postman()">
+	                    <input class="btn fh-ai-tool-btn" type="button" value="AI辅助调试" @click="askAiForRequest()">
+	                    <input class="btn fh-ai-tool-btn" type="button" value="诊断响应" @click="askAiForPostman()" :disabled="!resultContent">
+	                </div>
+	            </div>
+
+	            <section class="fh-inline-ai-panel" v-if="aiPanel.visible">
+	                <div class="fh-inline-ai-head">
+	                    <div class="fh-inline-ai-title">
+	                        <strong>{{aiPanel.title}}</strong>
+	                        <span v-if="aiPanel.subtitle">{{aiPanel.subtitle}}</span>
+	                    </div>
+	                    <div class="fh-inline-ai-actions">
+	                        <button type="button" @click="copyAiResult" :disabled="!aiPanel.result">复制</button>
+	                        <button type="button" class="fh-inline-ai-apply" v-if="aiPanel.canApply" @click="applyAiPanelResult" :disabled="!aiPanel.result || aiPanel.loading">{{aiPanel.applyLabel}}</button>
+	                        <button type="button" class="fh-inline-ai-close" @click="closeAiPanel" aria-label="关闭">&times;</button>
+	                    </div>
+	                </div>
+	                <div class="fh-inline-ai-body">
+	                    <div class="fh-inline-ai-status">{{aiPanel.statusText}}</div>
+	                    <div class="fh-inline-ai-output fh-inline-ai-markdown" v-if="!aiPanel.error" v-html="aiPanelResultHtml"></div>
+	                    <pre class="fh-inline-ai-error" v-if="aiPanel.error">{{aiPanel.error}}</pre>
+	                </div>
+	            </section>
 
 
 
-            <div ref="resultContainer" class="row hide">
+	            <div ref="resultContainer" class="row hide">
                 <div id="tabs">
                     <ul class="the-tabs">
                         <li><a href="#tab-content">数据</a></li>
@@ -163,6 +186,7 @@
     <script src="../json-format/json-bigint.js"></script>
     <script src="../json-format/format-lib.js"></script>
     <script src="../json-format/json-abc.js"></script>
-    <script type="text/javascript" src="index.js"></script>
+    <script src="../static/js/tool-layout.js"></script>
+    <script type="module" src="index.js"></script>
     </body>
 </html>
