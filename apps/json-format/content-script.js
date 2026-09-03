@@ -147,6 +147,15 @@ window.JsonAutoFormat = (() => {
         return /\.ya?ml$/i.test(new URL(location.href).pathname);
     };
 
+    let _isMarkdownLikeResource = () => {
+        const utils = _getJsonAutoUtils();
+        if (typeof utils.isMarkdownResource === 'function') {
+            return utils.isMarkdownResource(location.href, document.contentType);
+        }
+
+        return /\.(md|markdown|mdown|mkd|mkdn)$/i.test(new URL(location.href).pathname);
+    };
+
     let _injectContentCss = () => {
         if (cssInjected) {
             return;
@@ -1258,6 +1267,9 @@ window.JsonAutoFormat = (() => {
      */
     let _getJsonText = function () {
         if (_isYamlLikeResource()) {
+            return false;
+        }
+        if (_isMarkdownLikeResource()) {
             return false;
         }
 

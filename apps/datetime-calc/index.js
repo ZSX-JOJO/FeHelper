@@ -1253,15 +1253,24 @@ window.AppState = AppState;
 window.TimeUtils = TimeUtils;
 
 function parseUTCOffsetMinutes(offsetText) {
-    var text = String(offsetText || '').trim();
-    var match = text.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/);
-    if (!match) {
-        throw new Error('请输入有效的 UTC 偏移，例如 +08:00、-0500 或 -5');
+    var text = String(offsetText || '').trim().toUpperCase().replace(/\s+/g, '');
+    text = text.replace(/^(UTC|GMT)/, '');
+
+    var match = text.match(/^([+-]?)(\d{1,2})(?::?(\d{2}))?$/);
+    var decimalMatch = text.match(/^([+-]?)(\d{1,2})\.(\d+)$/);
+    if (!match && !decimalMatch) {
+        throw new Error('请输入有效的 UTC 偏移，例如 +08:00、UTC+9:30、GMT+5:45 或 +9.5');
     }
 
-    var sign = match[1] === '-' ? -1 : 1;
-    var hours = Number(match[2]);
-    var minutes = Number(match[3] || 0);
+    var signText = (match || decimalMatch)[1];
+    var sign = signText === '-' ? -1 : 1;
+    var hours = Number((match || decimalMatch)[2]);
+    var minutes = 0;
+    if (decimalMatch) {
+        minutes = Math.round(Number('0.' + decimalMatch[3]) * 60);
+    } else {
+        minutes = Number(match[3] || 0);
+    }
     if (hours > 14 || minutes > 59 || (hours === 14 && minutes !== 0)) {
         throw new Error('UTC 偏移范围必须在 -14:00 到 +14:00 之间');
     }

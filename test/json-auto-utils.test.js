@@ -165,6 +165,15 @@ describe('json-auto-utils', () => {
         expect(utils.isYAMLResource('https://example.com/data.json', 'application/json')).toBe(false);
     });
 
+    it('Issue #646/#650: Markdown resources are not JSON auto-format targets', () => {
+        expect(utils.isMarkdownResource('file:///Users/test/test.md', 'text/plain')).toBe(true);
+        expect(utils.isMarkdownResource('https://example.com/readme.markdown', 'text/plain')).toBe(true);
+        expect(utils.isMarkdownResource('https://example.com/content', 'text/markdown; charset=utf-8')).toBe(true);
+        expect(utils.isMarkdownResource('https://example.com/data.json', 'application/json')).toBe(false);
+        expect(utils.parseJSONLike('有一幢楼，建于[1990]年。')).not.toBeNull();
+        expect(utils.parseJSONLike('有一幢楼，建于[1990]年。', { allowExtractJSONFragment: false })).toBeNull();
+    });
+
     it('Issue #613: 自动格式化保留数字字符串 key 的输入顺序', () => {
         const parsed = utils.parseJSONLike('{"2":"b","1":"a","name":"FeHelper"}');
         const keys = Object.keys(parsed.value).map(utils.normalizePreservedKey);

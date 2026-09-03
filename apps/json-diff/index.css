@@ -282,11 +282,52 @@ body[browser-extension] .wp-json .mod-json {
 }
 
 .CodeMirror-linebackground.fh-diff-line-left {
-    background: rgba(221, 68, 68, 0.16);
+    background: rgba(221, 68, 68, 0.24);
 }
 
 .CodeMirror-linebackground.fh-diff-line-right {
-    background: rgba(75, 162, 255, 0.16);
+    background: rgba(75, 162, 255, 0.24);
+}
+
+.fh-json-diff-mark {
+    border-radius: 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+}
+
+.fh-json-diff-remove {
+    background-color: rgba(221, 68, 68, 0.28);
+}
+
+.fh-json-diff-add {
+    background-color: rgba(75, 162, 255, 0.28);
+}
+
+.fh-json-diff-change {
+    background-color: rgba(196, 151, 0, 0.34);
+}
+
+body.fh-modern.theme-dark .CodeMirror-linebackground.fh-diff-line-left {
+    background: rgba(248, 113, 113, 0.36);
+}
+
+body.fh-modern.theme-dark .CodeMirror-linebackground.fh-diff-line-right {
+    background: rgba(96, 165, 250, 0.36);
+}
+
+body.fh-modern.theme-dark .fh-json-diff-remove {
+    color: #fee2e2;
+    background-color: rgba(248, 113, 113, 0.42);
+}
+
+body.fh-modern.theme-dark .fh-json-diff-add {
+    color: #dbeafe;
+    background-color: rgba(96, 165, 250, 0.42);
+}
+
+body.fh-modern.theme-dark .fh-json-diff-change {
+    color: #fef3c7;
+    background-color: rgba(245, 158, 11, 0.46);
 }
 
 .box-wrapper-left {

@@ -70,10 +70,15 @@ describe('datetime-calc issue regressions', () => {
         expect(app.parseUTCOffsetMinutes('+08:00')).toBe(480);
         expect(app.parseUTCOffsetMinutes('-0500')).toBe(-300);
         expect(app.parseUTCOffsetMinutes('-5')).toBe(-300);
+        expect(app.parseUTCOffsetMinutes('9.5')).toBe(570);
+        expect(app.parseUTCOffsetMinutes('+9.5')).toBe(570);
+        expect(app.parseUTCOffsetMinutes('UTC+9:30')).toBe(570);
+        expect(app.parseUTCOffsetMinutes('GMT+5:45')).toBe(345);
         expect(app.formatUTCOffset(-300)).toBe('UTC-05:00');
         expect(app.getUTCTimestampFromFixedOffsetLocal('2026-08-15 00:00:00', 480))
             .toBe(Date.UTC(2026, 7, 14, 16, 0, 0));
         expect(() => app.parseUTCOffsetMinutes('+14:30')).toThrow('UTC 偏移范围');
+        expect(() => app.parseUTCOffsetMinutes('UTC+14.25')).toThrow('UTC 偏移范围');
         expect(typeof app.getUTCTimestampFromLocal).toBe('function');
     });
 });

@@ -244,7 +244,10 @@ describe('json-format settings regression guards', () => {
         expect(source).toContain("_scheduleToolbarAutoTuck(1500);");
         expect(source).toContain("let _isYamlLikeResource = () => {");
         expect(source).toContain("utils.isYAMLResource(location.href, document.contentType)");
+        expect(source).toContain("let _isMarkdownLikeResource = () => {");
+        expect(source).toContain("utils.isMarkdownResource(location.href, document.contentType)");
         expect(source.indexOf("if (_isYamlLikeResource()) {")).toBeLessThan(source.indexOf("let isJs = /\\.js$/.test(new URL(location.href).pathname);"));
+        expect(source.indexOf("if (_isMarkdownLikeResource()) {")).toBeLessThan(source.indexOf("let isJs = /\\.js$/.test(new URL(location.href).pathname);"));
         expect(source).toContain("toolbar.addEventListener('mouseenter'");
         expect(source).toContain("toolbar.addEventListener('mouseleave'");
         expect(source).toContain("class=\"fh-collapse-icon\"");
@@ -310,7 +313,9 @@ describe('json-format settings regression guards', () => {
         expect(formatLibSource).toContain("'<span id=\"jsonSelectionMeta\"/>");
         expect(formatLibSource).toContain("document.dispatchEvent(new CustomEvent('fh-json-selection-change'");
         expect(formatLibSource).toContain('function shouldWrapLongString(value)');
+        expect(readSource('apps/json-format/json-worker.js')).toContain('function shouldWrapLongString(value)');
         expect(formatLibSource).toContain("const lineClass = wrapLongString ? 'item item-line item-line-wrap' : 'item item-line';");
+        expect(formatLibSource).toContain('replace(/^<div class="item item-line(?: item-line-wrap)?">/');
         expect(formatLibSource).toContain("selected = $('#jfContent .item').first();");
         expect(backgroundSource).toContain("'static/vendor/jquery/jquery-3.3.1.min.js'");
         expect(cssSource).toContain('body.fh-json-compact');

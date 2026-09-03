@@ -2257,7 +2257,7 @@ window.Formatter = (function () {
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     // 如果不是最后一个属性，添加逗号
                     if (index < keys.length - 1) {
@@ -2291,7 +2291,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号
@@ -2356,7 +2356,7 @@ window.Formatter = (function () {
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     if (index < keys.length - 1) {
                         html += '<span class="comma">,</span>';
@@ -2387,7 +2387,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号
@@ -2427,7 +2427,7 @@ window.Formatter = (function () {
                     if (childNode.type === 'object' || childNode.type === 'array') {
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     if (index < keys.length - 1) {
                         html += '<span class="comma">,</span>';
@@ -2457,7 +2457,7 @@ window.Formatter = (function () {
                         html += '<span class="expand"></span>';
                         html += childNode.getInlineHTMLWithoutExpand();
                     } else {
-                        html += childNode.getHTML().replace(/^<div class="item item-line">/, '').replace(/<\/div>$/, '');
+                        html += childNode.getHTML().replace(/^<div class="item item-line(?: item-line-wrap)?">/, '').replace(/<\/div>$/, '');
                     }
                     
                     // 如果不是最后一个元素，添加逗号

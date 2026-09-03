@@ -678,9 +678,26 @@
         return /\.ya?ml$/i.test(pathname);
     }
 
+    function isMarkdownResource(url, contentType) {
+        const type = String(contentType || '').toLowerCase();
+        if (type.includes('markdown') || type.includes('x-markdown')) {
+            return true;
+        }
+
+        let pathname = '';
+        try {
+            pathname = new URL(String(url || ''), 'https://fehelper.local').pathname;
+        } catch (_) {
+            pathname = String(url || '').split(/[?#]/)[0];
+        }
+
+        return /\.(md|markdown|mdown|mkd|mkdn)$/i.test(pathname);
+    }
+
     return {
         isBigNumberLike,
         isYAMLResource,
+        isMarkdownResource,
         getStandaloneHTMLJSONCandidate,
         getPreservedValueAtPath,
         deletePreservedValueAtPath,

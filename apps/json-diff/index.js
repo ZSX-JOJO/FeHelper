@@ -380,14 +380,17 @@ window.vueApp = new Vue({
                     ? '两侧 JSON 比对完成，共有 ' + diffs.length + ' 处不一致！'
                     : '两侧 JSON 比对完成，内容一致！';
 
+                const leftPointers = diffs.length ? this.parseEditorPointers(jsonBox.left) : {};
+                const rightPointers = diffs.length ? this.parseEditorPointers(jsonBox.right) : {};
+
                 diffs.forEach((diff) => {
                     try {
                         if (diff.op === 'remove') {
-                            this.highlightDiff(diff, 'remove');
+                            this.highlightDiff(diff, 'remove', leftPointers, rightPointers);
                         } else if (diff.op === 'add') {
-                            this.highlightDiff(diff, 'add');
+                            this.highlightDiff(diff, 'add', leftPointers, rightPointers);
                         } else if (diff.op === 'replace') {
-                            this.highlightDiff(diff, 'replace');
+                            this.highlightDiff(diff, 'replace', leftPointers, rightPointers);
                         }
                     } catch (e) {
                         console.warn('error while trying to highlight diff', e);
@@ -534,34 +537,42 @@ window.vueApp = new Vue({
             });
         },
 
-        highlightDiff: function(diff, op) {
-            if (op === 'remove') {
-                this.highlightRemoval(jsonBox.left, diff);
-            } else if (op === 'add') {
-                this.highlightAddition(jsonBox.right, diff);
-            } else if (op === 'replace') {
-                this.highlightChange(jsonBox.left, diff);
-                this.highlightChange(jsonBox.right, diff);
+        parseEditorPointers: function(editor) {
+            try {
+                const result = jsonSourceMap.parse(editor.getValue());
+                return result.pointers || {};
+            } catch (e) {
+                console.error('生成 JSON 高亮索引失败:', e);
+                return {};
             }
         },
 
-        highlightRemoval: function(editor, diff) {
-            this._highlight(editor, diff, '#DD4444');
+        highlightDiff: function(diff, op, leftPointers, rightPointers) {
+            if (op === 'remove') {
+                this.highlightRemoval(jsonBox.left, diff, leftPointers);
+            } else if (op === 'add') {
+                this.highlightAddition(jsonBox.right, diff, rightPointers);
+            } else if (op === 'replace') {
+                this.highlightChange(jsonBox.left, diff, leftPointers);
+                this.highlightChange(jsonBox.right, diff, rightPointers);
+            }
         },
 
-        highlightAddition: function(editor, diff) {
-            this._highlight(editor, diff, '#4ba2ff');
+        highlightRemoval: function(editor, diff, pointers) {
+            this._highlight(editor, diff, 'fh-json-diff-remove', pointers);
         },
 
-        highlightChange: function(editor, diff) {
-            this._highlight(editor, diff, '#E5E833');
+        highlightAddition: function(editor, diff, pointers) {
+            this._highlight(editor, diff, 'fh-json-diff-add', pointers);
         },
 
-        _highlight: function(editor, diff, color) {
+        highlightChange: function(editor, diff, pointers) {
+            this._highlight(editor, diff, 'fh-json-diff-change', pointers);
+        },
+
+        _highlight: function(editor, diff, className, pointers) {
             try {
-                const textValue = editor.getValue();
-                const result = jsonSourceMap.parse(textValue);
-                const pointers = result.pointers;
+                pointers = pointers || this.parseEditorPointers(editor);
                 const path = normalizeDiffPointer(diff.path);
 
                 if (!pointers[path]) {
@@ -579,7 +590,7 @@ window.vueApp = new Vue({
                 };
 
                 editor.markText(start, end, {
-                    css: 'background-color: ' + color
+                    className: 'fh-json-diff-mark ' + className
                 });
             } catch (e) {
                 console.error('高亮过程出错:', e);
